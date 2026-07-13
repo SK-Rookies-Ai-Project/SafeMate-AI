@@ -1,0 +1,8 @@
+streamlit
+openai
+pandas
+scikit-learn
+joblib
+python-dotenv
+pypdf
+python-docx

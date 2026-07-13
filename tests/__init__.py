@@ -1,0 +1,1 @@
+"""SafeMate AI tests."""
