@@ -2,6 +2,7 @@ streamlit
 openai
 pandas
 scikit-learn
+xgboost
 joblib
 python-dotenv
 pypdf
