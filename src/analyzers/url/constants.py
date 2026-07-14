@@ -8,7 +8,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MODELS_DIR = PROJECT_ROOT / "models"
 
-DATA_DIR = PROJECT_ROOT / "data" / "url"
+DATA_DIR = PROJECT_ROOT / "data" / "raw"
 ALL_CSV = DATA_DIR / "All.csv"                      # ISCX-URL-2016 feature 데이터
 URL_BINARY_CSV = DATA_DIR / "url_binary_dataset.csv"  # raw URL + 악성/정상
 
