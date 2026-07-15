@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from src.config import MAX_SMS_CHARS
 
@@ -17,6 +17,11 @@ class UrlCandidate(TypedDict):
     url: str
     source_type: Literal["text", "href", "image_src"]
     input_index: int
+    displayed_url: NotRequired[str]
+    displayed_domain: NotRequired[str]
+    destination_domain: NotRequired[str]
+    display_href_mismatch: NotRequired[bool]
+    signals: NotRequired[list[str]]
 
 
 URL_PATTERN = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")

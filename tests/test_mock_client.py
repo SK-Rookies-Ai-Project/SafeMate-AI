@@ -65,6 +65,39 @@ class MockAnalysisClientTest(unittest.TestCase):
         self.assertEqual(duplicate["occurrence_count"], 2)
         self.assertEqual(duplicate["source_types"], ["text", "href"])
 
+    def test_preserves_html_link_mismatch_signal(self) -> None:
+        request = {
+            "schema_version": "1.0",
+            "request_id": "analysis-html-mismatch",
+            "input_type": "email",
+            "subject": "계정 확인",
+            "body": "링크를 확인하세요.",
+            "url_candidates": [
+                {
+                    "url": "https://evil.example/login",
+                    "source_type": "href",
+                    "input_index": 0,
+                    "displayed_url": "https://official.example/login",
+                    "displayed_domain": "official.example",
+                    "destination_domain": "evil.example",
+                    "display_href_mismatch": True,
+                    "signals": ["표시 주소와 실제 연결 도메인이 다릅니다."],
+                }
+            ],
+        }
+
+        result = MockAnalysisClient().analyze(request)
+
+        self.assertIn(
+            "표시 주소와 실제 연결 도메인이 다릅니다.",
+            result["url_analysis"][0]["signals"],
+        )
+        self.assertTrue(result["url_analysis"][0]["display_href_mismatch"])
+        self.assertIn(
+            "이메일에 표시된 주소와 실제 연결 주소가 다릅니다.",
+            result["risk_reasons"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,12 @@ def render_url_candidates(candidates: list[dict]) -> None:
     visible_candidates = candidates[:MAX_PREVIEW_URLS]
     for index, candidate in enumerate(visible_candidates, start=1):
         st.code(f"{index}. {candidate['url']} ({candidate['source_type']})", language=None)
+        if candidate.get("display_href_mismatch"):
+            st.warning(
+                "링크에 표시된 주소와 실제 연결 도메인이 다릅니다: "
+                f"{candidate.get('displayed_domain', '확인 불가')} → "
+                f"{candidate.get('destination_domain', '확인 불가')}"
+            )
     hidden_count = len(candidates) - len(visible_candidates)
     if hidden_count:
         st.caption(
@@ -116,6 +122,12 @@ def _render_url_analysis(result: dict) -> None:
             st.write(f"판정: `{analysis.get('label', 'unknown')}`")
             score = analysis.get("risk_score")
             st.write("위험 점수:", "분석 불가" if score is None else f"{score:.0%}")
+            if analysis.get("display_href_mismatch"):
+                st.warning(
+                    "표시 도메인과 실제 연결 도메인이 다릅니다: "
+                    f"{analysis.get('displayed_domain', '확인 불가')} → "
+                    f"{analysis.get('destination_domain', '확인 불가')}"
+                )
             for signal in analysis.get("signals", []):
                 st.markdown(f"- {signal}")
 

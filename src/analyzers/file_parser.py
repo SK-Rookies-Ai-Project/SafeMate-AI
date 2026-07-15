@@ -8,6 +8,7 @@ from email.parser import BytesParser
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from src.analyzers.input_parser import (
     UrlCandidate,
@@ -33,18 +34,37 @@ class _SafeHtmlExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.text_parts: list[str] = []
-        self.attribute_urls: list[tuple[str, Literal["href", "image_src"]]] = []
+        self.attribute_urls: list[dict] = []
+        self._active_anchor: dict | None = None
 
     def handle_data(self, data: str) -> None:
         if data.strip():
             self.text_parts.append(data.strip())
+        if self._active_anchor is not None:
+            self._active_anchor["visible_text"] += data
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         if tag.lower() == "a" and attributes.get("href"):
-            self.attribute_urls.append((attributes["href"] or "", "href"))
+            anchor = {
+                "url": (attributes["href"] or "").strip(),
+                "source_type": "href",
+                "visible_text": "",
+            }
+            self.attribute_urls.append(anchor)
+            self._active_anchor = anchor
         if tag.lower() == "img" and attributes.get("src"):
-            self.attribute_urls.append((attributes["src"] or "", "image_src"))
+            self.attribute_urls.append(
+                {
+                    "url": (attributes["src"] or "").strip(),
+                    "source_type": "image_src",
+                    "visible_text": "",
+                }
+            )
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a":
+            self._active_anchor = None
 
 
 def _content_as_text(part: Message) -> str:
@@ -103,7 +123,9 @@ def extract_url_candidates(message: Message, body: str) -> list[UrlCandidate]:
     _, html_parts = _message_text_parts(message)
     for html in html_parts:
         parser = _parse_html(html)
-        for raw_url, source_type in parser.attribute_urls:
+        for attribute in parser.attribute_urls:
+            raw_url = attribute["url"]
+            source_type = attribute["source_type"]
             if raw_url.lower().startswith(("cid:", "data:")):
                 continue
             attribute_candidates = extract_text_url_candidates(
@@ -111,8 +133,70 @@ def extract_url_candidates(message: Message, body: str) -> list[UrlCandidate]:
                 source_type=source_type,
                 start_index=len(candidates),
             )
+            if source_type == "href":
+                metadata = _build_href_metadata(
+                    raw_url,
+                    attribute.get("visible_text", ""),
+                )
+                for candidate in attribute_candidates:
+                    candidate.update(metadata)
             candidates.extend(attribute_candidates)
     return candidates
+
+
+def _build_href_metadata(href: str, visible_text: str) -> dict:
+    displayed_candidates = extract_text_url_candidates(visible_text)
+    if not displayed_candidates:
+        compact_text = "".join(visible_text.split())
+        if compact_text != visible_text:
+            displayed_candidates = extract_text_url_candidates(compact_text)
+    if not displayed_candidates:
+        return {"display_href_mismatch": False, "signals": []}
+
+    displayed_url = displayed_candidates[0]["url"]
+    displayed_domain = _normalized_hostname(displayed_url)
+    destination_domain = _normalized_hostname(href)
+    mismatch = bool(
+        displayed_domain
+        and destination_domain
+        and not _domains_are_related(displayed_domain, destination_domain)
+    )
+    return {
+        "displayed_url": displayed_url,
+        "displayed_domain": displayed_domain,
+        "destination_domain": destination_domain,
+        "display_href_mismatch": mismatch,
+        "signals": (
+            ["표시 주소와 실제 연결 도메인이 다릅니다."] if mismatch else []
+        ),
+    }
+
+
+def _normalized_hostname(url: str) -> str | None:
+    candidate = url.strip()
+    if candidate.lower().startswith("www."):
+        candidate = "https://" + candidate
+    try:
+        hostname = urlsplit(candidate).hostname
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+    normalized = hostname.rstrip(".").lower()
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+    try:
+        return normalized.encode("idna").decode("ascii")
+    except UnicodeError:
+        return normalized
+
+
+def _domains_are_related(first: str, second: str) -> bool:
+    return (
+        first == second
+        or first.endswith("." + second)
+        or second.endswith("." + first)
+    )
 
 
 def validate_eml(filename: str, file_bytes: bytes) -> tuple[Message, list[str]]:

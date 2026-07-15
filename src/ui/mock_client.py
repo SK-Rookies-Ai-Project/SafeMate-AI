@@ -31,6 +31,8 @@ class MockAnalysisClient:
         risk_reasons = [f"본문에서 '{term}' 표현이 확인되었습니다." for term in matched_terms[:3]]
         if selected:
             risk_reasons.append("외부 URL이 포함되어 별도 확인이 필요합니다.")
+        if any(item.get("display_href_mismatch") for item in selected):
+            risk_reasons.append("이메일에 표시된 주소와 실제 연결 주소가 다릅니다.")
         if not risk_reasons:
             risk_reasons.append("Mock 분석에서 뚜렷한 위험 신호가 확인되지 않았습니다.")
 
@@ -43,7 +45,13 @@ class MockAnalysisClient:
                 "status": "success",
                 "label": "suspicious",
                 "risk_score": 0.72,
-                "signals": ["Mock URL 분석 결과"],
+                "signals": candidate.get("signals", []) + ["Mock URL 분석 결과"],
+                "displayed_url": candidate.get("displayed_url"),
+                "displayed_domain": candidate.get("displayed_domain"),
+                "destination_domain": candidate.get("destination_domain"),
+                "display_href_mismatch": candidate.get(
+                    "display_href_mismatch", False
+                ),
                 "model_version": "mock-url-v1",
                 "error": None,
             }
@@ -120,12 +128,27 @@ def _deduplicate_and_prioritize(candidates: list[dict]) -> list[dict]:
                 "source_types": [],
                 "first_position": position,
                 "priority": SOURCE_PRIORITY[source_type],
+                "signals": [],
+                "displayed_url": candidate.get("displayed_url"),
+                "displayed_domain": candidate.get("displayed_domain"),
+                "destination_domain": candidate.get("destination_domain"),
+                "display_href_mismatch": bool(
+                    candidate.get("display_href_mismatch", False)
+                ),
             },
         )
         group["input_indexes"].append(input_index)
         if source_type not in group["source_types"]:
             group["source_types"].append(source_type)
         group["priority"] = min(group["priority"], SOURCE_PRIORITY[source_type])
+        for signal in candidate.get("signals", []):
+            if signal not in group["signals"]:
+                group["signals"].append(signal)
+        if candidate.get("display_href_mismatch"):
+            group["display_href_mismatch"] = True
+            for field in ("displayed_url", "displayed_domain", "destination_domain"):
+                if candidate.get(field):
+                    group[field] = candidate[field]
 
     ordered = sorted(
         grouped.values(),
