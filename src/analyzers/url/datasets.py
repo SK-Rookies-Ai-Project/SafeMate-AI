@@ -131,4 +131,31 @@ def make_tfidf_dataset(
     vectorizer가 있으면 추론용으로 transform만 수행한다.
     """
 
-    return 
+    cleaned_urls = [
+        features.clean_url(url)
+        for url in urls
+    ]
+
+    # vectorizer가 없으면 새로 fit, 있으면 transform만 수행
+    if vectorizer is None:
+        vectorizer = features.build_tfidf_vectorizer(**vectorizer_params)
+        X = vectorizer.fit_transform(cleaned_urls)
+    else:
+        X = vectorizer.transform(cleaned_urls)
+
+    # labels가 None이면 y도 None으로 설정
+    y = (
+        list(labels)
+        if labels is not None
+        else None
+    )
+
+    dataset = DataSet(
+        X=X,
+        y=y,
+        name=name,
+        random_state=random_state
+    )
+
+
+    return dataset,vectorizer
