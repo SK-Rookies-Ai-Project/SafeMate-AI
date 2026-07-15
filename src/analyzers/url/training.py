@@ -142,7 +142,8 @@ def train_model(
 
     Args:
         dataset: x, y가 채워진 DataSet.
-        model_type: MODEL_FACTORIES의 키 ('randomforest', 'xgboost').
+        model_type: MODEL_FACTORIES의 키
+            ('randomforest', 'xgboost', 'logistic', 'lstm').
         kind: 'feature' 또는 'tfidf' (추론 시 전처리 방법 결정).
         vectorizer: kind='tfidf'일 때 학습에 사용한 vectorizer.
         tune: True면 학습 전 RandomizedSearchCV로 하이퍼파라미터 탐색.
