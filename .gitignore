@@ -32,3 +32,6 @@ Thumbs.db
 
 # DataSet Folder
 data/
+
+#log
+*.log
