@@ -24,76 +24,7 @@ from src.analyzers.url import features
 from src.analyzers.url.constants import ALL_CSV, LABEL_COLUMN, URL_BINARY_CSV
 from src.analyzers.url.schemas import DataSet, ModelBundle
 from src.analyzers.url.model_registry import MODEL_FACTORIES, DEFAULT_PARAM_DISTRIBUTIONS, create_model
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# CSV 로딩 / 데이터셋 생성
-# ---------------------------------------------------------------------------
-
-def load_feature_csv(
-    path: Union[str, Path] = ALL_CSV,
-    nrows: Optional[int] = None,
-    random_state: int = 42,
-) -> DataSet:
-    """All.csv(feature 79개 + 라벨)를 DataSet으로 로딩."""
-    df = pd.read_csv(path, nrows=nrows)
-    x = features.clean_feature_matrix(df[features.FEATURE_NAMES])
-    y = df[LABEL_COLUMN].tolist()
-    return DataSet(x, y, name=Path(path).stem, random_state=random_state)
-
-
-def load_url_csv(
-    path: Union[str, Path] = URL_BINARY_CSV,
-    nrows: Optional[int] = None,
-) -> Tuple[list, list]:
-    """raw URL CSV(url, status)를 (urls, labels)로 로딩. 감싼 따옴표 제거."""
-    df = pd.read_csv(path, nrows=nrows)
-    urls = [features.clean_url(u) for u in df.iloc[:, 0].astype(str)]
-    labels = df.iloc[:, 1].tolist()
-    return urls, labels
-
-
-def make_feature_dataset(
-    urls: Sequence[str],
-    labels: Optional[Sequence] = None,
-    name: str = "url-features",
-    random_state: int = 42,
-) -> DataSet:
-    """유형1: URL 배열 → lexical feature DataSet."""
-    x = features.clean_feature_matrix(features.build_url_dataset(urls))
-    return DataSet(x, list(labels) if labels is not None else None,
-                   name=name, random_state=random_state)
-
-
-def make_tfidf_dataset(
-    urls: Sequence[str],
-    labels: Optional[Sequence] = None,
-    name: str = "url-tfidf",
-    random_state: int = 42,
-    vectorizer=None,
-    **vectorizer_params,
-):
-    """유형2: URL 배열 → TF-IDF DataSet.
-
-    vectorizer를 주면 transform만(추론용), 없으면 새로 fit(학습용).
-
-    Returns:
-        (DataSet, vectorizer) 튜플. vectorizer는 ModelBundle에 담아야
-        추론 시 동일한 전처리를 재현할 수 있다.
-    """
-    cleaned = [features.clean_url(u) for u in urls]
-    if vectorizer is None:
-        vectorizer = features.build_tfidf_vectorizer(**vectorizer_params)
-        x = vectorizer.fit_transform(cleaned)
-    else:
-        x = vectorizer.transform(cleaned)
-    ds = DataSet(x, list(labels) if labels is not None else None,
-                 name=name, random_state=random_state)
-    return ds, vectorizer
-
+from src.analyzers.url.datasets import load_feature_csv, load_url_csv, make_feature_dataset, make_tfidf_dataset
 
 # ---------------------------------------------------------------------------
 # 학습 / 하이퍼파라미터 튜닝

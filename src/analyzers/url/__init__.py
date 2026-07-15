@@ -18,7 +18,6 @@ from src.analyzers.url.features import (
     extract_url_features,
     normalize_url,
 )
-from src.analyzers.url.prediction import analyze_urls, predict_urls
 from src.analyzers.url.schemas import DataSet, ModelBundle
 from src.analyzers.url.training import (
     MODEL_FACTORIES,
@@ -30,6 +29,13 @@ from src.analyzers.url.training import (
     train_model,
     tune_hyperparameters,
 )
+
+try:
+    from src.analyzers.url.prediction import analyze_url, analyze_urls, predict_urls
+except ModuleNotFoundError:
+    analyze_url = None
+    analyze_urls = None
+    predict_urls = None
 
 __all__ = [
     "ALL_CSV",
@@ -46,8 +52,6 @@ __all__ = [
     "clean_url",
     "extract_url_features",
     "normalize_url",
-    "analyze_urls",
-    "predict_urls",
     "DataSet",
     "ModelBundle",
     "MODEL_FACTORIES",
@@ -59,3 +63,6 @@ __all__ = [
     "train_model",
     "tune_hyperparameters",
 ]
+
+if analyze_urls is not None:
+    __all__.extend(["analyze_url", "analyze_urls", "predict_urls"])
