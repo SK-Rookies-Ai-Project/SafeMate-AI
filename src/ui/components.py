@@ -5,6 +5,13 @@ from __future__ import annotations
 import streamlit as st
 
 from src.services.web_search import is_official_source_url
+from src.ui.visualizations import (
+    create_message_feature_chart,
+    create_message_probability_chart,
+    create_url_contribution_chart,
+    create_url_feature_chart,
+    create_url_risk_chart,
+)
 
 
 MAX_PREVIEW_URLS = 20
@@ -138,9 +145,20 @@ def _render_message_analysis(analysis: dict) -> None:
         "피싱 확률: "
         + ("분석 불가" if probability is None else f"{probability:.0%}")
     )
+    probability_chart = create_message_probability_chart(analysis)
+    if probability_chart is not None:
+        st.pyplot(probability_chart, clear_figure=True)
+
     signals = analysis.get("signals", [])
     if signals:
         st.text("위험 신호: " + ", ".join(str(signal) for signal in signals))
+
+    top_features = analysis.get("top_features", [])
+    feature_chart = create_message_feature_chart(top_features)
+    if feature_chart is not None:
+        st.pyplot(feature_chart, clear_figure=True)
+    elif "top_features" in analysis:
+        st.caption("현재 모델에서는 단어별 기여도를 제공하지 않습니다.")
     st.text(f"모델 버전: {analysis.get('model_version', 'unknown')}")
 
 
@@ -156,6 +174,11 @@ def _render_url_analysis(result: dict) -> None:
     if not analyses:
         st.info("분석할 URL이 없습니다.")
         return
+
+    risk_chart = create_url_risk_chart(analyses)
+    if risk_chart is not None:
+        st.pyplot(risk_chart, clear_figure=True)
+
     for analysis in analyses:
         with st.container(border=True):
             st.code(analysis.get("url", ""), language=None)
@@ -173,6 +196,16 @@ def _render_url_analysis(result: dict) -> None:
                 )
             for signal in analysis.get("signals", []):
                 st.text(f"• {signal}")
+
+            features = analysis.get("features", [])
+            feature_chart = create_url_feature_chart(features)
+            contribution_chart = create_url_contribution_chart(features)
+            if feature_chart is not None:
+                st.pyplot(feature_chart, clear_figure=True)
+            if contribution_chart is not None:
+                st.pyplot(contribution_chart, clear_figure=True)
+            elif features:
+                st.caption("현재 모델에서는 URL 특징별 기여도를 제공하지 않습니다.")
 
 
 def _render_evidence(result: dict) -> None:

@@ -11,6 +11,7 @@ Streamlit 기반 AI 보안 비서 프로젝트입니다.
 - OpenAI Web Search / File Search 기반 근거 제공
 - 사용자 대응 방법 안내
 - 1차 분석 완료 후 결과 기반 보안 비서 채팅
+- 모델 반환 계약 기반 Matplotlib 위험도·특징 기여도 시각화
 
 ## 환경변수
 

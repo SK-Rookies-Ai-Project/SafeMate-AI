@@ -84,6 +84,7 @@ SafeMate-AI/
 | `src/services/web_search.py` | 최신 위협 사례 검색과 Web 근거 정규화 |
 | `src/services/file_search.py` | 공식 지침 검색과 File 근거 정규화 |
 | `src/ui/components.py` | 입력 유형 선택, SMS 입력, 이메일 업로드, 미리보기, 결과 카드, 오류 UI 구성요소 |
+| `src/ui/visualizations.py` | 모델 반환 계약을 Matplotlib 확률·특징·기여도 그래프로 변환 |
 | `data/knowledge_base/` | File Search에 사용할 검수된 공식 자료 |
 | `data/samples/` | 개인정보가 제거된 정상·위험 SMS 및 이메일 데모 입력 |
 | `models/` | 학습된 모델과 전처리기 파일 |
@@ -97,6 +98,14 @@ SafeMate-AI/
 - Web Search는 기본 제공하고 `OPENAI_VECTOR_STORE_ID`가 있을 때만 File Search를 추가한다.
 - 대화 기록은 Streamlit 세션에만 유지하고 Responses API는 `store: false`로 호출한다.
 - 입력 해시 변경, 재분석, 입력 유형 변경 또는 초기화 시 채팅 상태를 제거한다.
+
+### 분석 결과 시각화 경계
+
+- 메시지 확률 그래프는 `phishing_probability`만 사용하며 정상 확률은 `1 - phishing_probability`로 표시한다.
+- 메시지 특징 그래프는 `top_features[].contribution`이 있는 항목만 표시한다.
+- URL 비교 그래프는 `url_analysis[].risk_score`, 특징 그래프는 `features[].normalized_value`를 사용한다.
+- URL 기여도 그래프는 `features[].contribution`이 `None`이 아닌 항목만 표시한다.
+- 누락되거나 범위를 벗어난 값을 임의로 보정하거나 생성하지 않는다.
 
 `data/raw/`에는 학습용 원천 데이터만 저장하며 사용자가 입력한 SMS와 업로드한 이메일은 저장하지 않는다. 비밀정보와 모델 대용량 파일의 Git 추적 여부는 `.gitignore`에서 관리한다.
 

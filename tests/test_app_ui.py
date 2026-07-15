@@ -22,6 +22,7 @@ class AppChatUiTest(unittest.TestCase):
             app.chat_input[0].placeholder,
             "분석 결과에 대해 궁금한 점을 직접 입력하세요.",
         )
+        self.assertEqual(len(app.get("image")), 5)
         self.assertEqual(len(app.exception), 0)
 
 

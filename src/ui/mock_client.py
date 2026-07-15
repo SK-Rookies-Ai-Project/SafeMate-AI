@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from src.config import (
     MAX_ANALYSIS_REQUEST_BYTES,
@@ -61,6 +62,7 @@ class MockAnalysisClient:
                 "display_href_mismatch": candidate.get(
                     "display_href_mismatch", False
                 ),
+                "features": _build_mock_url_features(candidate["url"]),
                 "model_version": "mock-url-v1",
                 "error": None,
             }
@@ -91,6 +93,14 @@ class MockAnalysisClient:
                 "label": "phishing" if has_risk else "normal",
                 "phishing_probability": 0.84 if has_risk else 0.12,
                 "signals": matched_terms or ["Mock 메시지 분석 결과"],
+                "top_features": [
+                    {
+                        "name": term,
+                        "value": 1.0,
+                        "contribution": round(0.31 - index * 0.04, 2),
+                    }
+                    for index, term in enumerate(matched_terms[:5])
+                ],
                 "model_version": "mock-message-v1",
                 "error": None,
             },
@@ -114,6 +124,37 @@ class MockAnalysisClient:
             ],
             "errors": [],
         }
+
+
+def _build_mock_url_features(url: str) -> list[dict]:
+    """Return deterministic demo features while the URL model is unavailable."""
+    try:
+        parsed = urlsplit(url if "://" in url else "https://" + url)
+        hostname = parsed.hostname or ""
+    except ValueError:
+        hostname = ""
+    special_character_count = sum(not char.isalnum() for char in url)
+    subdomain_count = max(0, len(hostname.split(".")) - 2) if hostname else 0
+    return [
+        {
+            "name": "URL 길이",
+            "raw_value": len(url),
+            "normalized_value": min(len(url) / 120, 1.0),
+            "contribution": 0.18,
+        },
+        {
+            "name": "특수문자 개수",
+            "raw_value": special_character_count,
+            "normalized_value": min(special_character_count / 20, 1.0),
+            "contribution": 0.14,
+        },
+        {
+            "name": "서브도메인 개수",
+            "raw_value": subdomain_count,
+            "normalized_value": min(subdomain_count / 5, 1.0),
+            "contribution": 0.11,
+        },
+    ]
 
 
 def _deduplicate_and_prioritize(candidates: list[dict]) -> list[dict]:
