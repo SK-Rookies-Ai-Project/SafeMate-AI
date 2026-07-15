@@ -11,24 +11,88 @@ xgboost는 미설치 환경에서도 나머지가 동작하도록 지연 임포�
     bundle.save("models/url_feature_rf.joblib")
 """
 
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Sequence, Tuple, Union
 
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.preprocessing import LabelEncoder
 
-from src.analyzers.url.datasets import (
-    load_feature_csv,
-    load_url_csv,
-    make_feature_dataset,
-    make_tfidf_dataset,
-)
-from src.analyzers.url.model_registry import (
-    DEFAULT_PARAM_DISTRIBUTIONS,
-    MODEL_FACTORIES,
-    create_model,
-)
+from src.analyzers.url import features
+from src.analyzers.url.constants import ALL_CSV, LABEL_COLUMN, URL_BINARY_CSV
 from src.analyzers.url.schemas import DataSet, ModelBundle
+from src.analyzers.url.model_registry import MODEL_FACTORIES, DEFAULT_PARAM_DISTRIBUTIONS, create_model
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# CSV 로딩 / 데이터셋 생성
+# ---------------------------------------------------------------------------
+
+def load_feature_csv(
+    path: Union[str, Path] = ALL_CSV,
+    nrows: Optional[int] = None,
+    random_state: int = 42,
+) -> DataSet:
+    """All.csv(feature 79개 + 라벨)를 DataSet으로 로딩."""
+    df = pd.read_csv(path, nrows=nrows)
+    x = features.clean_feature_matrix(df[features.FEATURE_NAMES])
+    y = df[LABEL_COLUMN].tolist()
+    return DataSet(x, y, name=Path(path).stem, random_state=random_state)
+
+
+def load_url_csv(
+    path: Union[str, Path] = URL_BINARY_CSV,
+    nrows: Optional[int] = None,
+) -> Tuple[list, list]:
+    """raw URL CSV(url, status)를 (urls, labels)로 로딩. 감싼 따옴표 제거."""
+    df = pd.read_csv(path, nrows=nrows)
+    urls = [features.clean_url(u) for u in df.iloc[:, 0].astype(str)]
+    labels = df.iloc[:, 1].tolist()
+    return urls, labels
+
+
+def make_feature_dataset(
+    urls: Sequence[str],
+    labels: Optional[Sequence] = None,
+    name: str = "url-features",
+    random_state: int = 42,
+) -> DataSet:
+    """유형1: URL 배열 → lexical feature DataSet."""
+    x = features.clean_feature_matrix(features.build_url_dataset(urls))
+    return DataSet(x, list(labels) if labels is not None else None,
+                   name=name, random_state=random_state)
+
+
+def make_tfidf_dataset(
+    urls: Sequence[str],
+    labels: Optional[Sequence] = None,
+    name: str = "url-tfidf",
+    random_state: int = 42,
+    vectorizer=None,
+    **vectorizer_params,
+):
+    """유형2: URL 배열 → TF-IDF DataSet.
+
+    vectorizer를 주면 transform만(추론용), 없으면 새로 fit(학습용).
+
+    Returns:
+        (DataSet, vectorizer) 튜플. vectorizer는 ModelBundle에 담아야
+        추론 시 동일한 전처리를 재현할 수 있다.
+    """
+    cleaned = [features.clean_url(u) for u in urls]
+    if vectorizer is None:
+        vectorizer = features.build_tfidf_vectorizer(**vectorizer_params)
+        x = vectorizer.fit_transform(cleaned)
+    else:
+        x = vectorizer.transform(cleaned)
+    ds = DataSet(x, list(labels) if labels is not None else None,
+                 name=name, random_state=random_state)
+    return ds, vectorizer
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +125,69 @@ def tune_hyperparameters(
     search.fit(dataset.x, dataset.y)
     return search.best_estimator_, search.best_params_
 
+# 중요도 계산 
+def importance_tuning_params(
+    dataset: DataSet,
+    model_type: str,
+    drop_n: int = 20,
+    random_state: int = 42,
+) -> Tuple[DataSet, list]:
+    """
+    Feature Importance를 이용하여 중요도가 낮은 feature를 제거한
+    DataSet을 반환한다.
+
+    흐름
+        1. Baseline 모델 학습
+        2. Feature Importance 계산
+        3. 중요도가 낮은 feature 제거
+        4. 새로운 DataSet 생성
+    """
+
+    # 학습 데이터가 없으면 중요도를 계산할 수 없음
+    if dataset.y is None:
+        raise ValueError("중요도 계산에는 라벨(y)이 필요합니다.")
+
+    # feature 이름을 알아야 제거할 수 있으므로 DataFrame인지 확인
+    if not hasattr(dataset.x, "columns"):
+        raise ValueError(
+            "dataset.x가 DataFrame이어야 feature 이름을 추적할 수 있습니다."
+        )
+
+    feature_names = list(dataset.x.columns)
+
+    # 제거할 feature 개수 검증
+    if drop_n <= 0 or drop_n >= len(feature_names):
+        raise ValueError(
+            f"drop_n은 1 이상 {len(feature_names)-1} 이하이어야 합니다."
+        )
+
+    # 1. Baseline 모델 학습
+    baseline_model = create_model(model_type, random_state)
+    baseline_model.fit(dataset.x, dataset.y)
+
+    # 2. Feature Importance 계산
+    importances = baseline_model.feature_importances_
+
+    importance_series = (
+        pd.Series(importances, index=feature_names)
+        .sort_values(ascending=True)
+    )
+
+    # 3. 중요도가 낮은 feature 제거
+    dropped_features = importance_series.index[:drop_n].tolist()
+    selected_features = importance_series.index[drop_n:].tolist()
+
+    # 4. 선택된 feature만으로 새로운 DataSet 생성
+    x_selected = dataset.x[selected_features]
+
+    reduced_dataset = DataSet(
+        x_selected,
+        dataset.y,
+        name=dataset.name,
+        random_state=dataset.random_state,
+    )
+
+    return reduced_dataset, dropped_features
 
 def train_model(
     dataset: DataSet,
@@ -70,6 +197,8 @@ def train_model(
     tune: bool = False,
     tune_kwargs: Optional[dict] = None,
     test_size: float = 0.2,
+    drop_unimportant: bool = False,
+    drop_n: int = 20,
     **model_params,
 ) -> ModelBundle:
     """DataSet으로 모델을 학습해 ModelBundle로 반환.
@@ -78,12 +207,13 @@ def train_model(
 
     Args:
         dataset: x, y가 채워진 DataSet.
-        model_type: MODEL_FACTORIES의 키
-            ('randomforest', 'xgboost', 'logistic', 'lstm').
+        model_type: MODEL_FACTORIES의 키 ('randomforest', 'xgboost').
         kind: 'feature' 또는 'tfidf' (추론 시 전처리 방법 결정).
         vectorizer: kind='tfidf'일 때 학습에 사용한 vectorizer.
         tune: True면 학습 전 RandomizedSearchCV로 하이퍼파라미터 탐색.
         tune_kwargs: tune_hyperparameters에 넘길 인자 (n_iter, cv 등).
+        drop_unimportant: True면 1차 학습 후 중요도 하위 drop_n개 제거 후 재학습
+        drop_n: 제거할 중요도 하위 feature 수 (기본 20). 
     """
     if dataset.y is None:
         raise ValueError("학습에는 라벨(y)이 필요합니다.")
@@ -92,18 +222,35 @@ def train_model(
 
     encoder = LabelEncoder()
     y = encoder.fit_transform(dataset.y)
-    encoded = DataSet(dataset.x, y, dataset.name, dataset.random_state)
+
+    dataset = DataSet(
+        dataset.x,
+        y,
+        dataset.name,
+        dataset.random_state,
+    )
+
+    dropped_features = []
+
+    # 중요도가 낮은 feature 제거
+    if drop_unimportant:
+        dataset, dropped_features = importance_tuning_params(
+            dataset,
+            model_type=model_type,
+            drop_n=drop_n,
+            random_state=dataset.random_state,
+        )
 
     model = create_model(model_type, dataset.random_state, **model_params)
     best_params = dict(model_params)
     if tune:
         model, tuned = tune_hyperparameters(
-            model, encoded, model_type=model_type, **(tune_kwargs or {})
+            model, dataset, model_type=model_type, **(tune_kwargs or {})
         )
         best_params.update(tuned)
 
     # holdout 평가
-    train_ds, test_ds = encoded.split(test_size=test_size)
+    train_ds, test_ds = dataset.split(test_size=test_size)
     model.fit(train_ds.x, train_ds.y)
     pred = model.predict(test_ds.x)
     metrics = {
@@ -114,7 +261,7 @@ def train_model(
     }
 
     # 전체 데이터로 재학습한 최종 모델
-    model.fit(encoded.x, encoded.y)
+    model.fit(dataset.x, dataset.y)
 
     return ModelBundle(
         model=model,
