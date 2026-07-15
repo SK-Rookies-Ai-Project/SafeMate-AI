@@ -17,6 +17,43 @@ RISK_LABELS = {
 }
 
 
+def build_chat_suggestions(result: dict) -> list[str]:
+    """Create concise follow-up questions from the completed analysis."""
+    risk_level = result.get("overall_risk", {}).get("level", "unknown")
+    input_type = result.get("input_type", "sms")
+    url_analyses = result.get("url_analysis", [])
+    has_url = bool(url_analyses)
+    has_href_mismatch = any(
+        item.get("display_href_mismatch") for item in url_analyses
+    )
+
+    suggestions: list[str] = []
+    if risk_level == "high":
+        suggestions.extend(
+            [
+                "지금 가장 먼저 해야 할 일은 무엇인가요?",
+                "이미 링크를 눌렀다면 어떻게 해야 하나요?",
+            ]
+        )
+    elif risk_level == "low":
+        suggestions.append("추가로 확인해야 할 위험 요소가 있나요?")
+    else:
+        suggestions.append("왜 주의가 필요한지 쉽게 설명해 주세요.")
+
+    if has_href_mismatch:
+        suggestions.append("표시 주소와 실제 연결 주소가 왜 다른가요?")
+    elif has_url:
+        suggestions.append("이 URL에서 어떤 위험 신호가 발견됐나요?")
+
+    if input_type == "email":
+        suggestions.append("이 이메일의 발신자를 안전하게 확인하는 방법은 무엇인가요?")
+    else:
+        suggestions.append("이 문자가 정상인지 확인하는 방법을 알려주세요.")
+
+    suggestions.append("최신 유사 피해 사례와 공식 대응 방법을 찾아주세요.")
+    return list(dict.fromkeys(suggestions))[:4]
+
+
 def render_data_notice() -> None:
     st.info(
         "입력한 문자 또는 이메일 내용은 분석 과정에서 외부 AI 서비스로 "
@@ -182,6 +219,28 @@ def _safe_http_url(value: object) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return value.strip()
+
+
+def render_chat_sources(citations: list[dict], tools_used: list[str]) -> None:
+    """Display tool activity and user-visible citations for a chat response."""
+    labels = {
+        "web_search": "웹 검색",
+        "file_search": "보안 문서 검색",
+    }
+    visible_tools = [labels[item] for item in tools_used if item in labels]
+    if visible_tools:
+        st.caption("사용한 도구: " + " · ".join(visible_tools))
+
+    if not citations:
+        return
+    with st.expander("참고 출처"):
+        for citation in citations:
+            if citation.get("type") == "url":
+                url = _safe_http_url(citation.get("url"))
+                if url:
+                    st.markdown(f"- [{citation.get('title', url)}]({url})")
+            elif citation.get("type") == "file":
+                st.markdown(f"- {citation.get('title', '등록된 보안 문서')}")
 
 
 def _format_file_location(item: dict) -> str:

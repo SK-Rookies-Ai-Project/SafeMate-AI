@@ -12,7 +12,17 @@ from src.analyzers.input_parser import (
     prepare_sms_input,
 )
 from src.config import MAX_SMS_CHARS
-from src.ui.components import render_analysis_result, render_data_notice, render_preview
+from src.services.openai_client import (
+    MAX_CHAT_QUESTION_CHARS,
+    OpenAISecurityChatClient,
+)
+from src.ui.components import (
+    build_chat_suggestions,
+    render_analysis_result,
+    render_chat_sources,
+    render_data_notice,
+    render_preview,
+)
 from src.ui.mock_client import MockAnalysisClient, build_analysis_request
 
 
@@ -26,6 +36,8 @@ DEFAULT_STATE = {
     "analysis_status": "idle",
     "analysis_result": None,
     "analysis_error": None,
+    "chat_messages": [],
+    "chat_error": None,
     "uploader_key": 0,
 }
 
@@ -42,6 +54,12 @@ def clear_analysis_state() -> None:
     st.session_state.analysis_status = "idle"
     st.session_state.analysis_result = None
     st.session_state.analysis_error = None
+    clear_chat_state()
+
+
+def clear_chat_state() -> None:
+    st.session_state.chat_messages = []
+    st.session_state.chat_error = None
 
 
 def update_current_input_digest(digest: str | None) -> None:
@@ -52,6 +70,7 @@ def update_current_input_digest(digest: str | None) -> None:
         st.session_state.analysis_status = "idle"
         st.session_state.analysis_result = None
         st.session_state.analysis_error = None
+        clear_chat_state()
     st.session_state.current_input_digest = digest
 
 
@@ -100,6 +119,82 @@ def parse_selected_input() -> tuple[dict | None, str | None]:
     digest = create_input_digest("email", file_bytes)
     update_current_input_digest(digest)
     return prepared, None
+
+
+def render_followup_chat() -> None:
+    """Render chat only after the independent analysis stage has completed."""
+    st.divider()
+    st.subheader("분석 결과에 대해 SafeMate와 대화하기")
+    st.caption(
+        "1차 보안 판정은 이미 완료되었습니다. 아래 대화는 그 결과를 바꾸지 않고, "
+        "등록된 보안 문서와 최신 웹 자료를 활용해 후속 대응을 돕습니다."
+    )
+
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message["role"] == "assistant":
+                render_chat_sources(
+                    message.get("citations", []),
+                    message.get("tools_used", []),
+                )
+
+    if st.session_state.chat_error:
+        st.error(st.session_state.chat_error)
+
+    st.markdown("#### 이런 질문으로 시작해 보세요")
+    suggestions = build_chat_suggestions(st.session_state.analysis_result)
+    suggestion_columns = st.columns(2)
+    suggested_question = None
+    for index, suggestion in enumerate(suggestions):
+        if suggestion_columns[index % 2].button(
+            suggestion,
+            key=f"chat_suggestion_{index}",
+            use_container_width=True,
+            help="클릭하면 바로 SafeMate에게 질문합니다.",
+        ):
+            suggested_question = suggestion
+
+    typed_question = st.chat_input(
+        "분석 결과에 대해 궁금한 점을 직접 입력하세요.",
+        max_chars=MAX_CHAT_QUESTION_CHARS,
+        key="security_followup_chat",
+    )
+    question = suggested_question or typed_question
+    if not question:
+        return
+
+    st.session_state.chat_error = None
+    previous_history = list(st.session_state.chat_messages)
+    st.session_state.chat_messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
+
+    try:
+        with st.chat_message("assistant"):
+            with st.spinner("공식 자료와 최신 정보를 확인하고 있습니다."):
+                reply = OpenAISecurityChatClient().ask(
+                    question=question,
+                    analysis_result=st.session_state.analysis_result,
+                    history=previous_history,
+                )
+            st.markdown(reply["text"])
+            render_chat_sources(reply["citations"], reply["tools_used"])
+        st.session_state.chat_messages.append(
+            {
+                "role": "assistant",
+                "content": reply["text"],
+                "citations": reply["citations"],
+                "tools_used": reply["tools_used"],
+            }
+        )
+    except Exception as exc:
+        logger.error("security_chat_failed exception_type=%s", type(exc).__name__)
+        st.session_state.chat_error = (
+            "후속 답변을 생성하지 못했습니다. API 설정과 네트워크 상태를 확인한 뒤 "
+            "다시 질문해 주세요."
+        )
+        st.error(st.session_state.chat_error)
 
 
 st.set_page_config(page_title="SafeMate AI", page_icon="🛡️", layout="wide")
@@ -156,6 +251,7 @@ if analyze_clicked and prepared_input is not None:
     request = build_analysis_request(prepared_input, f"analysis-{uuid4().hex[:12]}")
     st.session_state.analysis_status = "analyzing"
     st.session_state.analysis_error = None
+    clear_chat_state()
     try:
         with st.spinner("입력 내용을 분석하고 있습니다."):
             result = MockAnalysisClient().analyze(request)
@@ -178,3 +274,4 @@ if st.session_state.analysis_error:
     st.error(st.session_state.analysis_error)
 if st.session_state.analysis_result:
     render_analysis_result(st.session_state.analysis_result)
+    render_followup_chat()
