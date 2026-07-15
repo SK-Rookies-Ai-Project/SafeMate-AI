@@ -6,7 +6,7 @@ from src.analyzers import url_analyzer
 from src.analyzers.url.schemas import ModelBundle
 
 
-MODELS_DIR = Path("models")
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 MODEL_FILES = sorted(MODELS_DIR.glob("*.joblib"))
 KNOWN_UNLOADABLE_MODELS = {
     "url_feature_xgboost.joblib": "XGBoostError: input stream corrupted",
