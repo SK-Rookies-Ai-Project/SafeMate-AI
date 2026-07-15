@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.analyzers.url import features, training
+from src.analyzers.url import features, training, datasets
 from src.analyzers.url.schemas import ModelBundle
 
 
@@ -49,7 +49,7 @@ def test_load_url_csv_cleans_wrapped_quotes(tmp_path):
         }
     ).to_csv(csv_path, index=False)
 
-    urls, labels = training.load_url_csv(csv_path)
+    urls, labels = datasets.load_url_csv(csv_path)
 
     assert urls == ["https://example.com", "http://test.org/a"]
     assert labels == ["benign", "malicious"]
@@ -67,7 +67,7 @@ def test_load_feature_csv_creates_dataset_and_cleans_values(tmp_path, sample_url
     csv_path = tmp_path / "all_like.csv"
     df.to_csv(csv_path, index=False)
 
-    ds = training.load_feature_csv(csv_path)
+    ds = datasets.load_feature_csv(csv_path)
 
     assert ds.name == "all_like"
     assert len(ds) == len(urls)
@@ -81,7 +81,7 @@ def test_load_feature_csv_creates_dataset_and_cleans_values(tmp_path, sample_url
 def test_make_feature_dataset_builds_expected_shape(sample_urls_and_labels):
     urls, labels = sample_urls_and_labels
 
-    ds = training.make_feature_dataset(urls, labels=labels, name="feature-ds")
+    ds = datasets.make_feature_dataset(urls, labels=labels, name="feature-ds")
 
     assert ds.name == "feature-ds"
     assert len(ds) == len(urls)
@@ -90,11 +90,11 @@ def test_make_feature_dataset_builds_expected_shape(sample_urls_and_labels):
 
 
 def test_importance_tuning_params_drops_low_importance_features(sample_urls_and_labels):
-    if not hasattr(training, "importance_tuning_params"):
+    if not hasattr(datasets, "importance_tuning_params"):
         pytest.skip("importance_tuning_params is not available in this training module version")
 
     urls, labels = sample_urls_and_labels
-    ds = training.make_feature_dataset(urls, labels=labels)
+    ds = datasets.make_feature_dataset(urls, labels=labels)
 
     reduced, dropped = training.importance_tuning_params(
         ds,
@@ -109,7 +109,7 @@ def test_importance_tuning_params_drops_low_importance_features(sample_urls_and_
 
 def test_train_model_feature_flow_train_predict_save_load(tmp_path, sample_urls_and_labels):
     urls, labels = sample_urls_and_labels
-    ds = training.make_feature_dataset(urls, labels=labels)
+    ds = datasets.make_feature_dataset(urls, labels=labels)
 
     # Keep core train/predict/save/load path compatible across module revisions.
     bundle = training.train_model(ds, model_type="randomforest", kind="feature", n_estimators=30, max_depth=6)
@@ -133,7 +133,7 @@ def test_train_model_feature_flow_train_predict_save_load(tmp_path, sample_urls_
 
 def test_train_model_tfidf_flow_train_predict(sample_urls_and_labels):
     urls, labels = sample_urls_and_labels
-    ds_tfidf, vec = training.make_tfidf_dataset(urls, labels=labels, min_df=1, ngram_range=(1, 2))
+    ds_tfidf, vec = datasets.make_tfidf_dataset(urls, labels=labels, min_df=1, ngram_range=(1, 2))
 
     bundle = training.train_model(
         ds_tfidf,
