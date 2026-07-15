@@ -23,6 +23,7 @@ from sklearn.preprocessing import LabelEncoder
 from src.analyzers.url import features
 from src.analyzers.url.constants import ALL_CSV, LABEL_COLUMN, URL_BINARY_CSV
 from src.analyzers.url.schemas import DataSet, ModelBundle
+from src.analyzers.url.model_registry import MODEL_FACTORIES, DEFAULT_PARAM_DISTRIBUTIONS, create_model
 
 
 
