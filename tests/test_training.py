@@ -74,8 +74,8 @@ def test_load_feature_csv_creates_dataset_and_cleans_values(tmp_path, sample_url
     assert ds.n_features == len(features.FEATURE_NAMES)
     assert isinstance(ds.y, list)
     assert ds.y[0] in {"benign", "malicious"}
-    assert ds.x.iloc[0, 0] == -1.0
-    assert ds.x.iloc[1, 1] == -1.0
+    assert ds.x.loc[0, "pathurlRatio"] == -1.0
+    assert ds.x.loc[1, "ArgUrlRatio"] == -1.0
 
 
 def test_make_feature_dataset_builds_expected_shape(sample_urls_and_labels):
