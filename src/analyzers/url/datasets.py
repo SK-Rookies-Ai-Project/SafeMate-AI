@@ -14,6 +14,7 @@ from src.analyzers.url.constants import (
 from src.analyzers.url.schemas import DataSet
 
 
+# schemas.py의 DataSet 클래스 활용
 def load_feature_csv(
     path: Union[str, Path] = ALL_CSV,
     nrows: Optional[int] = None,
@@ -51,25 +52,41 @@ def load_feature_csv(
     """모델 입력용 정리: ±inf → NaN → -1 로 치환 (NaN을 못 받는 모델 대비)."""
     return df.replace([float("inf"), float("-inf")], float("nan")).fillna(-1.0)
     '''
-    x = features.clean_feature_matrix(df[features.FEATURE_NAMES].values)
+    X = features.clean_feature_matrix(df[features.FEATURE_NAMES])
 
-    y = df[LABEL_COLUMN].tolist
+    y = df[LABEL_COLUMN].tolist()
 
     return DataSet(
-        x=x,
+        X=X,
         y=y,
         name=path.stem,
         random_state=random_state
     )
 
-
+# TF-IDF 사용을 위한 데이터
 def load_url_csv(
     path: Union[str, Path] = URL_BINARY_CSV,
     nrows: Optional[int] = None,
 ) -> Tuple[list[str], list]:
     """URL 원문과 라벨을 CSV에서 읽는다."""
 
-    return 
+    # Path 객체로 변환
+    path = Path(path)
+
+    # 파일 존재 여부 확인
+    if not path.exists():
+        raise FileNotFoundError(f"URL CSV를 찾을 수 없습니다: {path}")
+    
+    df = pd.read_csv(path, nrows=nrows)
+
+    # 데이터 확인
+    if df.shape[1] < 2:
+        raise ValueError(f"URL CSV가 비어 있습니다: {path}")
+    
+    urls = [features.clean_url(url) for url in df.iloc[:, 0].astype(str)]
+    labels = df.iloc[:, 1].tolist()
+
+    return urls, labels
 
 
 def make_feature_dataset(
@@ -79,6 +96,7 @@ def make_feature_dataset(
     random_state: int = 42,
 ) -> DataSet:
     """URL 원문을 구조 Feature DataSet으로 변환한다."""
+
 
     return DataSet(
        
