@@ -6,6 +6,7 @@ from src.services.openai_client import (
     OpenAISecurityChatClient,
     build_analysis_snapshot,
 )
+from src.services.web_search import build_web_search_tool
 
 
 class FakeResponses:
@@ -114,7 +115,10 @@ class OpenAISecurityChatClientTest(unittest.TestCase):
             history=[],
         )
 
-        self.assertEqual(fake.responses.calls[0]["tools"], [{"type": "web_search"}])
+        self.assertEqual(
+            fake.responses.calls[0]["tools"],
+            [build_web_search_tool()],
+        )
 
     def test_rejects_blank_question_before_api_call(self) -> None:
         fake = FakeOpenAI(make_response())

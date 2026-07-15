@@ -2,23 +2,25 @@ import unittest
 
 from src.ui.components import (
     _format_file_location,
-    _safe_http_url,
+    _safe_official_http_url,
     build_chat_suggestions,
 )
 
 
 class UiComponentsTest(unittest.TestCase):
-    def test_allows_only_http_and_https_source_links(self) -> None:
+    def test_allows_only_approved_official_https_source_links(self) -> None:
         self.assertEqual(
-            _safe_http_url("https://www.kisa.or.kr/notice"),
+            _safe_official_http_url("https://www.kisa.or.kr/notice"),
             "https://www.kisa.or.kr/notice",
         )
-        self.assertEqual(
-            _safe_http_url("http://example.go.kr/guide"),
-            "http://example.go.kr/guide",
+        self.assertIsNone(
+            _safe_official_http_url("https://unreviewed.example/guide")
         )
-        self.assertIsNone(_safe_http_url("javascript:alert(1)"))
-        self.assertIsNone(_safe_http_url("file:///tmp/guide.pdf"))
+        self.assertIsNone(_safe_official_http_url("http://www.kisa.or.kr/guide"))
+        self.assertIsNone(
+            _safe_official_http_url("https://kisa.or.kr@unreviewed.example/guide")
+        )
+        self.assertIsNone(_safe_official_http_url("javascript:alert(1)"))
 
     def test_formats_file_search_location(self) -> None:
         self.assertEqual(

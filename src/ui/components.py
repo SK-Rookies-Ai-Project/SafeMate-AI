@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import streamlit as st
+
+from src.services.web_search import is_official_source_url
 
 
 MAX_PREVIEW_URLS = 20
@@ -104,15 +104,15 @@ def render_analysis_result(result: dict) -> None:
     first, second = st.columns(2)
     first.metric("종합 주의 수준", RISK_LABELS.get(level, level))
     second.metric("종합 점수", "분석 불가" if score is None else f"{score:.0%}")
-    st.write(result.get("summary", "분석 요약이 없습니다."))
+    st.text(str(result.get("summary", "분석 요약이 없습니다.")))
 
     st.markdown("#### 왜 주의해야 하나요?")
     for reason in result.get("risk_reasons", [])[:5]:
-        st.markdown(f"- {reason}")
+        st.text(f"• {reason}")
 
     st.markdown("#### 지금 무엇을 해야 하나요?")
     for index, action in enumerate(result.get("recommended_actions", [])[:5], start=1):
-        st.markdown(f"{index}. {action}")
+        st.text(f"{index}. {action}")
 
     message_tab, url_tab, evidence_tab, limitation_tab = st.tabs(
         ["문자·이메일 분석", "URL 분석", "공식 출처", "분석 한계"]
@@ -132,13 +132,16 @@ def _render_message_analysis(analysis: dict) -> None:
     if not analysis:
         st.info("메시지 분석 결과가 없습니다.")
         return
-    st.write(f"분류: `{analysis.get('label', 'unknown')}`")
+    st.text(f"분류: {analysis.get('label', 'unknown')}")
     probability = analysis.get("phishing_probability")
-    st.write("피싱 확률:", "분석 불가" if probability is None else f"{probability:.0%}")
+    st.text(
+        "피싱 확률: "
+        + ("분석 불가" if probability is None else f"{probability:.0%}")
+    )
     signals = analysis.get("signals", [])
     if signals:
-        st.write("위험 신호:", ", ".join(signals))
-    st.caption(f"모델 버전: {analysis.get('model_version', 'unknown')}")
+        st.text("위험 신호: " + ", ".join(str(signal) for signal in signals))
+    st.text(f"모델 버전: {analysis.get('model_version', 'unknown')}")
 
 
 def _render_url_analysis(result: dict) -> None:
@@ -156,9 +159,12 @@ def _render_url_analysis(result: dict) -> None:
     for analysis in analyses:
         with st.container(border=True):
             st.code(analysis.get("url", ""), language=None)
-            st.write(f"판정: `{analysis.get('label', 'unknown')}`")
+            st.text(f"판정: {analysis.get('label', 'unknown')}")
             score = analysis.get("risk_score")
-            st.write("위험 점수:", "분석 불가" if score is None else f"{score:.0%}")
+            st.text(
+                "위험 점수: "
+                + ("분석 불가" if score is None else f"{score:.0%}")
+            )
             if analysis.get("display_href_mismatch"):
                 st.warning(
                     "표시 도메인과 실제 연결 도메인이 다릅니다: "
@@ -166,7 +172,7 @@ def _render_url_analysis(result: dict) -> None:
                     f"{analysis.get('destination_domain', '확인 불가')}"
                 )
             for signal in analysis.get("signals", []):
-                st.markdown(f"- {signal}")
+                st.text(f"• {signal}")
 
 
 def _render_evidence(result: dict) -> None:
@@ -180,45 +186,42 @@ def _render_evidence(result: dict) -> None:
         st.markdown("#### 최신 위협 사례")
     for item in web_evidence:
         with st.container(border=True):
-            st.markdown(f"**{item.get('title', '제목 없음')}**")
+            st.text(str(item.get("title", "제목 없음")))
             organization = item.get("organization", "기관 정보 없음")
             published_at = item.get("published_at")
-            st.caption(
+            st.text(
                 organization
                 if not published_at
                 else f"{organization} · 게시일 {published_at}"
             )
             if item.get("summary"):
-                st.write(item["summary"])
-            source_url = _safe_http_url(item.get("url"))
+                st.text(str(item["summary"]))
+            source_url = _safe_official_http_url(item.get("url"))
             if source_url:
                 st.link_button("공식 출처 열기", source_url)
             elif item.get("url"):
-                st.caption("안전한 HTTP/HTTPS 주소가 아니어서 링크를 비활성화했습니다.")
+                st.caption("검증된 공식 HTTPS 도메인이 아니어서 링크를 비활성화했습니다.")
 
     if file_evidence:
         st.markdown("#### 공식 대응 지침")
     for item in file_evidence:
         with st.container(border=True):
-            st.markdown(f"**{item.get('title', '제목 없음')}**")
-            st.caption(item.get("organization", "기관 정보 없음"))
+            st.text(str(item.get("title", "제목 없음")))
+            st.text(str(item.get("organization", "기관 정보 없음")))
             location = _format_file_location(item)
             if location:
-                st.write(f"문서 위치: {location}")
+                st.text(f"문서 위치: {location}")
             if item.get("excerpt"):
-                st.markdown(f"> {item['excerpt']}")
-            external_url = _safe_http_url(item.get("external_url"))
+                st.text(str(item["excerpt"]))
+            external_url = _safe_official_http_url(item.get("external_url"))
             if external_url:
                 st.link_button("외부 원문 열기", external_url)
 
 
-def _safe_http_url(value: object) -> str | None:
-    if not isinstance(value, str):
+def _safe_official_http_url(value: object) -> str | None:
+    if not is_official_source_url(value):
         return None
-    parsed = urlparse(value.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-    return value.strip()
+    return str(value).strip()
 
 
 def render_chat_sources(citations: list[dict], tools_used: list[str]) -> None:
@@ -236,11 +239,12 @@ def render_chat_sources(citations: list[dict], tools_used: list[str]) -> None:
     with st.expander("참고 출처"):
         for citation in citations:
             if citation.get("type") == "url":
-                url = _safe_http_url(citation.get("url"))
+                url = _safe_official_http_url(citation.get("url"))
                 if url:
-                    st.markdown(f"- [{citation.get('title', url)}]({url})")
+                    st.text(str(citation.get("title", "공식 출처")))
+                    st.link_button("공식 출처 열기", url)
             elif citation.get("type") == "file":
-                st.markdown(f"- {citation.get('title', '등록된 보안 문서')}")
+                st.text(str(citation.get("title", "등록된 보안 문서")))
 
 
 def _format_file_location(item: dict) -> str:
@@ -254,6 +258,8 @@ def _format_file_location(item: dict) -> str:
 
 def _render_limitations(result: dict) -> None:
     for limitation in result.get("limitations", []):
-        st.warning(limitation.get("message", "분석 한계 정보가 없습니다."))
+        st.warning("분석 한계")
+        st.text(str(limitation.get("message", "분석 한계 정보가 없습니다.")))
     for error in result.get("errors", []):
-        st.error(error.get("message", "일부 분석에 실패했습니다."))
+        st.error("일부 분석 실패")
+        st.text(str(error.get("message", "일부 분석에 실패했습니다.")))

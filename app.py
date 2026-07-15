@@ -132,7 +132,7 @@ def render_followup_chat() -> None:
 
     for message in st.session_state.chat_messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            st.text(message["content"])
             if message["role"] == "assistant":
                 render_chat_sources(
                     message.get("citations", []),
@@ -168,7 +168,7 @@ def render_followup_chat() -> None:
     previous_history = list(st.session_state.chat_messages)
     st.session_state.chat_messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
-        st.markdown(question)
+        st.text(question)
 
     try:
         with st.chat_message("assistant"):
@@ -178,7 +178,7 @@ def render_followup_chat() -> None:
                     analysis_result=st.session_state.analysis_result,
                     history=previous_history,
                 )
-            st.markdown(reply["text"])
+            st.text(reply["text"])
             render_chat_sources(reply["citations"], reply["tools_used"])
         st.session_state.chat_messages.append(
             {

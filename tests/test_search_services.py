@@ -8,8 +8,10 @@ from src.services.file_search import (
     normalize_file_citation,
 )
 from src.services.web_search import (
+    OFFICIAL_SOURCE_DOMAINS,
     WEB_SEARCH_INCLUDE,
     build_web_search_tool,
+    is_official_source_url,
     is_web_search_call,
     normalize_web_citation,
 )
@@ -17,8 +19,23 @@ from src.services.web_search import (
 
 class WebSearchServiceTest(unittest.TestCase):
     def test_builds_hosted_web_search_tool(self) -> None:
-        self.assertEqual(build_web_search_tool(), {"type": "web_search"})
+        self.assertEqual(
+            build_web_search_tool(),
+            {
+                "type": "web_search",
+                "filters": {"allowed_domains": list(OFFICIAL_SOURCE_DOMAINS)},
+            },
+        )
         self.assertEqual(WEB_SEARCH_INCLUDE, "web_search_call.action.sources")
+
+    def test_rejects_unapproved_source_urls(self) -> None:
+        self.assertTrue(is_official_source_url("https://www.kisa.or.kr/notice"))
+        self.assertTrue(is_official_source_url("https://ecrm.police.go.kr/guide"))
+        self.assertFalse(is_official_source_url("https://security.example/guide"))
+        self.assertFalse(is_official_source_url("http://www.kisa.or.kr/notice"))
+        self.assertFalse(
+            is_official_source_url("https://kisa.or.kr@security.example/guide")
+        )
 
     def test_identifies_web_search_call(self) -> None:
         self.assertTrue(is_web_search_call({"type": "web_search_call"}))
@@ -29,7 +46,7 @@ class WebSearchServiceTest(unittest.TestCase):
             SimpleNamespace(
                 type="url_citation",
                 title="공식 보안 안내",
-                url="https://security.example/guide",
+                url="https://www.kisa.or.kr/guide",
             )
         )
 
@@ -38,8 +55,17 @@ class WebSearchServiceTest(unittest.TestCase):
             {
                 "type": "url",
                 "title": "공식 보안 안내",
-                "url": "https://security.example/guide",
+                "url": "https://www.kisa.or.kr/guide",
             },
+        )
+        self.assertIsNone(
+            normalize_web_citation(
+                {
+                    "type": "url_citation",
+                    "title": "검증되지 않은 출처",
+                    "url": "https://security.example/guide",
+                }
+            )
         )
         self.assertIsNone(normalize_web_citation({"type": "file_citation"}))
 
