@@ -105,7 +105,7 @@ class OpenAISecurityChatClientTest(unittest.TestCase):
         client = OpenAISecurityChatClient(
             client=fake,
             model="gpt-5.6",
-            vector_store_id=None,
+            vector_store_id=" ",
         )
 
         client.ask(
