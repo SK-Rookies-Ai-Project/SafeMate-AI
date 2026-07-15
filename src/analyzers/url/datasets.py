@@ -57,7 +57,7 @@ def load_feature_csv(
     y = df[LABEL_COLUMN].tolist()
 
     return DataSet(
-        X=X,
+        x=X,
         y=y,
         name=path.stem,
         random_state=random_state
@@ -110,7 +110,7 @@ def make_feature_dataset(
     )
 
     return DataSet(
-        X=X,
+        x=X,
         y=y,
         name=name,
         random_state=random_state
@@ -151,7 +151,7 @@ def make_tfidf_dataset(
     )
 
     dataset = DataSet(
-        X=X,
+        x=X,
         y=y,
         name=name,
         random_state=random_state
