@@ -21,8 +21,45 @@ def load_feature_csv(
 ) -> DataSet:
     """All.csv의 구조 Feature와 라벨을 DataSet으로 반환한다."""
 
+    # Path 객체로 변환
+    path = Path(path)
+
+    # 파일 존재 여부 확인
+    if not path.exists():
+        raise FileNotFoundError(f"Feature CSV를 찾을 수 없습니다: {path}")
+    
+    # CSV 파일 읽기
+    df = pd.read_csv(path, nrows=nrows)
+
+    # Missing columns 확인
+    missing_columns =[]
+
+    for column in features.FEATURE_NAMES:
+        if column not in df.columns:
+            missing_columns.append(column)
+
+    # raise 메소드로 missing columns 확인
+    if missing_columns:
+        raise ValueError(f"Feature CSV에 필요한 컬럼이 없습니다: {missing_columns}")
+    
+    if LABEL_COLUMN not in df.columns:
+        raise ValueError(f"Feature CSV에 라벨 컬럼이 없습니다: {LABEL_COLUMN}")
+    
+    # clean_feature_matrix 함수활용으로 x 정리
+    '''
+    def clean_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """모델 입력용 정리: ±inf → NaN → -1 로 치환 (NaN을 못 받는 모델 대비)."""
+    return df.replace([float("inf"), float("-inf")], float("nan")).fillna(-1.0)
+    '''
+    x = features.clean_feature_matrix(df[features.FEATURE_NAMES].values)
+
+    y = df[LABEL_COLUMN].tolist
 
     return DataSet(
+        x=x,
+        y=y,
+        name=path.stem,
+        random_state=random_state
     )
 
 
