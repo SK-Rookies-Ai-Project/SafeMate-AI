@@ -53,13 +53,15 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
     """
 
     def __init__(self, hidden_size=64, num_layers=1, dropout=0.0,
-                 epochs=10, batch_size=64, lr=1e-3, random_state=42):
+                 epochs=10, batch_size=64, lr=1e-3, device="auto",
+                 random_state=42):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
         self.epochs = epochs
         self.batch_size = batch_size
         self.lr = lr
+        self.device = device  # 'auto' | 'cpu' | 'cuda'
         self.random_state = random_state
 
     @staticmethod
@@ -77,17 +79,28 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
         if hasattr(x, "toarray"):  # scipy sparse (tfidf)
             x = x.toarray()
         x = np.asarray(x, dtype=np.float32)
-        x = (x - self._mean_) / self._std_
+        # 수백만 행에서 임시 배열을 아끼려고 복사 1회 + in-place 나눗셈
+        x = x - self._mean_
+        x /= self._std_
         # (n, seq_len=d, input_size=1)
         return torch.from_numpy(x).unsqueeze(-1)
+
+    def _resolve_device(self, torch):
+        if self.device == "auto":
+            return torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"
+            )
+        return torch.device(self.device)
 
     def fit(self, x, y):
         torch, nn = self._torch()
         torch.manual_seed(self.random_state)
+        dev = self._resolve_device(torch)
 
         self.classes_, y_idx = np.unique(y, return_inverse=True)
-        raw = x.toarray() if hasattr(x, "toarray") else np.asarray(x)
-        raw = raw.astype(np.float32)
+        # asarray는 이미 float32면 복사하지 않는다 (수 GB 절약)
+        raw = (x.toarray() if hasattr(x, "toarray") else x)
+        raw = np.asarray(raw, dtype=np.float32)
         self._mean_ = raw.mean(axis=0)
         self._std_ = raw.std(axis=0)
         self._std_[self._std_ == 0] = 1.0
@@ -103,7 +116,7 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
             batch_first=True,
         )
         head = nn.Linear(self.hidden_size, len(self.classes_))
-        self.model_ = nn.ModuleDict({"lstm": lstm, "head": head})
+        self.model_ = nn.ModuleDict({"lstm": lstm, "head": head}).to(dev)
 
         optimizer = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
         loss_fn = nn.CrossEntropyLoss()
@@ -117,21 +130,29 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
         for _ in range(self.epochs):
             for xb, yb in loader:
                 optimizer.zero_grad()
-                loss = loss_fn(self._forward(xb), yb)
+                loss = loss_fn(self._forward(xb.to(dev)), yb.to(dev))
                 loss.backward()
                 optimizer.step()
+        # 저장(pickle)·추론 호환성을 위해 학습 후 CPU로 이동
+        self.model_.to("cpu")
         return self
 
     def _forward(self, xb):
         _, (h_n, _) = self.model_["lstm"](xb)
         return self.model_["head"](h_n[-1])  # 마지막 layer의 hidden state
 
-    def predict_proba(self, x):
+    def predict_proba(self, x, batch_size: int = 8192):
+        # 한 번에 forward하면 LSTM 중간 활성값(n × seq × hidden)이
+        # 수십 GB가 될 수 있어 반드시 배치로 나눠 추론한다
         torch, _ = self._torch()
         self.model_.eval()
+        xt = self._to_tensor(x, torch)
+        outs = []
         with torch.no_grad():
-            logits = self._forward(self._to_tensor(x, torch))
-            return torch.softmax(logits, dim=1).numpy()
+            for i in range(0, len(xt), batch_size):
+                logits = self._forward(xt[i:i + batch_size])
+                outs.append(torch.softmax(logits, dim=1))
+        return torch.cat(outs).numpy()
 
     def predict(self, x):
         return self.classes_[self.predict_proba(x).argmax(axis=1)]
