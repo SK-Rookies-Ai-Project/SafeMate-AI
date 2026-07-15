@@ -1,7 +1,12 @@
 import unittest
 
 from src.analyzers.input_parser import prepare_sms_input
-from src.ui.mock_client import MockAnalysisClient, build_analysis_request
+from src.config import MAX_ANALYSIS_REQUEST_BYTES, MAX_URL_CANDIDATES
+from src.ui.mock_client import (
+    AnalysisRequestValidationError,
+    MockAnalysisClient,
+    build_analysis_request,
+)
 
 
 class MockAnalysisClientTest(unittest.TestCase):
@@ -33,6 +38,36 @@ class MockAnalysisClientTest(unittest.TestCase):
                 "url_candidates",
             },
         )
+
+    def test_caps_url_candidates_in_final_request(self) -> None:
+        prepared = {
+            "input_type": "email",
+            "subject": "URL 제한 테스트",
+            "body": "본문",
+            "url_candidates": [
+                {
+                    "url": f"https://example.com/{index}",
+                    "source_type": "href",
+                    "input_index": index,
+                }
+                for index in range(MAX_URL_CANDIDATES + 50)
+            ],
+        }
+
+        request = build_analysis_request(prepared, "analysis-url-limit")
+
+        self.assertEqual(len(request["url_candidates"]), MAX_URL_CANDIDATES)
+
+    def test_rejects_oversized_final_request(self) -> None:
+        prepared = {
+            "input_type": "email",
+            "subject": "요청 크기 제한 테스트",
+            "body": "가" * MAX_ANALYSIS_REQUEST_BYTES,
+            "url_candidates": [],
+        }
+
+        with self.assertRaises(AnalysisRequestValidationError):
+            build_analysis_request(prepared, "analysis-size-limit")
 
     def test_deduplicates_and_prioritizes_url_candidates(self) -> None:
         request = {

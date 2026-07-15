@@ -18,6 +18,7 @@ from src.analyzers.input_parser import (
 from src.config import (
     KNOWN_BINARY_SIGNATURES,
     MAX_EML_SIZE_BYTES,
+    MAX_URL_CANDIDATES,
     SUSPICIOUS_PREVIOUS_EXTENSIONS,
 )
 
@@ -31,11 +32,12 @@ class EmlValidationError(ValueError):
 class _SafeHtmlExtractor(HTMLParser):
     """Extract visible text and URL attributes without rendering or fetching."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_attribute_urls: int = MAX_URL_CANDIDATES) -> None:
         super().__init__(convert_charrefs=True)
         self.text_parts: list[str] = []
         self.attribute_urls: list[dict] = []
         self._active_anchor: dict | None = None
+        self._max_attribute_urls = max(0, max_attribute_urls)
 
     def handle_data(self, data: str) -> None:
         if data.strip():
@@ -46,6 +48,9 @@ class _SafeHtmlExtractor(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         if tag.lower() == "a" and attributes.get("href"):
+            if len(self.attribute_urls) >= self._max_attribute_urls:
+                self._active_anchor = None
+                return
             anchor = {
                 "url": (attributes["href"] or "").strip(),
                 "source_type": "href",
@@ -54,6 +59,8 @@ class _SafeHtmlExtractor(HTMLParser):
             self.attribute_urls.append(anchor)
             self._active_anchor = anchor
         if tag.lower() == "img" and attributes.get("src"):
+            if len(self.attribute_urls) >= self._max_attribute_urls:
+                return
             self.attribute_urls.append(
                 {
                     "url": (attributes["src"] or "").strip(),
@@ -97,8 +104,12 @@ def _message_text_parts(message: Message) -> tuple[list[str], list[str]]:
     return plain_parts, html_parts
 
 
-def _parse_html(html: str) -> _SafeHtmlExtractor:
-    parser = _SafeHtmlExtractor()
+def _parse_html(
+    html: str,
+    *,
+    max_attribute_urls: int = MAX_URL_CANDIDATES,
+) -> _SafeHtmlExtractor:
+    parser = _SafeHtmlExtractor(max_attribute_urls=max_attribute_urls)
     parser.feed(html)
     parser.close()
     return parser
@@ -119,10 +130,15 @@ def extract_text_body(message: Message) -> str:
 
 def extract_url_candidates(message: Message, body: str) -> list[UrlCandidate]:
     """Collect visible text, href, and image-src URL candidates in order."""
-    candidates = extract_text_url_candidates(body)
+    candidates = extract_text_url_candidates(body, max_candidates=MAX_URL_CANDIDATES)
+    if len(candidates) >= MAX_URL_CANDIDATES:
+        return candidates
     _, html_parts = _message_text_parts(message)
     for html in html_parts:
-        parser = _parse_html(html)
+        remaining = MAX_URL_CANDIDATES - len(candidates)
+        if remaining <= 0:
+            break
+        parser = _parse_html(html, max_attribute_urls=remaining)
         for attribute in parser.attribute_urls:
             raw_url = attribute["url"]
             source_type = attribute["source_type"]
@@ -132,6 +148,7 @@ def extract_url_candidates(message: Message, body: str) -> list[UrlCandidate]:
                 raw_url,
                 source_type=source_type,
                 start_index=len(candidates),
+                max_candidates=MAX_URL_CANDIDATES - len(candidates),
             )
             if source_type == "href":
                 metadata = _build_href_metadata(
@@ -141,15 +158,23 @@ def extract_url_candidates(message: Message, body: str) -> list[UrlCandidate]:
                 for candidate in attribute_candidates:
                     candidate.update(metadata)
             candidates.extend(attribute_candidates)
+            if len(candidates) >= MAX_URL_CANDIDATES:
+                break
     return candidates
 
 
 def _build_href_metadata(href: str, visible_text: str) -> dict:
-    displayed_candidates = extract_text_url_candidates(visible_text)
+    displayed_candidates = extract_text_url_candidates(
+        visible_text,
+        max_candidates=1,
+    )
     if not displayed_candidates:
         compact_text = "".join(visible_text.split())
         if compact_text != visible_text:
-            displayed_candidates = extract_text_url_candidates(compact_text)
+            displayed_candidates = extract_text_url_candidates(
+                compact_text,
+                max_candidates=1,
+            )
     if not displayed_candidates:
         return {"display_href_mismatch": False, "signals": []}
 

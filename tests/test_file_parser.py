@@ -2,6 +2,7 @@ import unittest
 from email.message import EmailMessage
 
 from src.analyzers.file_parser import EmlValidationError, parse_eml, validate_eml
+from src.config import MAX_URL_CANDIDATES
 
 
 def build_email_bytes(*, html: bool = False) -> bytes:
@@ -125,6 +126,20 @@ class EmlParserTest(unittest.TestCase):
 
         self.assertFalse(
             any(item["source_type"] == "href" for item in result["url_candidates"])
+        )
+
+    def test_caps_html_url_candidates_before_request_building(self) -> None:
+        anchors = "".join(
+            f'<a href="https://example.com/{index}">링크 {index}</a>'
+            for index in range(MAX_URL_CANDIDATES + 50)
+        )
+
+        result = parse_eml(build_html_email(anchors), "message.eml")
+
+        self.assertEqual(len(result["url_candidates"]), MAX_URL_CANDIDATES)
+        self.assertEqual(
+            result["url_candidates"][-1]["input_index"],
+            MAX_URL_CANDIDATES - 1,
         )
 
 

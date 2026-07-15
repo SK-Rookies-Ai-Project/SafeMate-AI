@@ -23,7 +23,11 @@ from src.ui.components import (
     render_data_notice,
     render_preview,
 )
-from src.ui.mock_client import MockAnalysisClient, build_analysis_request
+from src.ui.mock_client import (
+    AnalysisRequestValidationError,
+    MockAnalysisClient,
+    build_analysis_request,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -248,20 +252,26 @@ right.button(
 )
 
 if analyze_clicked and prepared_input is not None:
-    request = build_analysis_request(prepared_input, f"analysis-{uuid4().hex[:12]}")
+    request_id = f"analysis-{uuid4().hex[:12]}"
     st.session_state.analysis_status = "analyzing"
     st.session_state.analysis_error = None
     clear_chat_state()
     try:
+        request = build_analysis_request(prepared_input, request_id)
         with st.spinner("입력 내용을 분석하고 있습니다."):
             result = MockAnalysisClient().analyze(request)
         st.session_state.analysis_result = result
         st.session_state.analysis_status = result.get("status", "success")
         st.session_state.last_analyzed_digest = st.session_state.current_input_digest
+    except AnalysisRequestValidationError as exc:
+        logger.warning("analysis_request_rejected request_id=%s", request_id)
+        st.session_state.analysis_status = "error"
+        st.session_state.analysis_result = None
+        st.session_state.analysis_error = str(exc)
     except Exception as exc:
         logger.error(
             "analysis_failed request_id=%s exception_type=%s",
-            request["request_id"],
+            request_id,
             type(exc).__name__,
         )
         st.session_state.analysis_status = "error"

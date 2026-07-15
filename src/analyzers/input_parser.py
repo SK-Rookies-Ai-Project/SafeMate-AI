@@ -6,7 +6,7 @@ import hashlib
 import re
 from typing import Literal, NotRequired, TypedDict
 
-from src.config import MAX_SMS_CHARS
+from src.config import MAX_SMS_CHARS, MAX_URL_CANDIDATES, MAX_URL_LENGTH_CHARS
 
 
 class InputValidationError(ValueError):
@@ -37,12 +37,15 @@ def extract_text_url_candidates(
     *,
     source_type: Literal["text", "href", "image_src"] = "text",
     start_index: int = 0,
+    max_candidates: int = MAX_URL_CANDIDATES,
 ) -> list[UrlCandidate]:
     """Return URL candidates in first-appearance order without fetching them."""
+    if max_candidates <= 0:
+        return []
     candidates: list[UrlCandidate] = []
     for match in URL_PATTERN.finditer(text):
         url = _clean_url(match.group(0))
-        if not url:
+        if not url or len(url) > MAX_URL_LENGTH_CHARS:
             continue
         candidates.append(
             {
@@ -51,6 +54,8 @@ def extract_text_url_candidates(
                 "input_index": start_index + len(candidates),
             }
         )
+        if len(candidates) >= max_candidates:
+            break
     return candidates
 
 
