@@ -3,7 +3,9 @@ openai
 pandas
 scikit-learn
 xgboost
+torch
 joblib
 python-dotenv
 pypdf
 python-docx
+pytest
