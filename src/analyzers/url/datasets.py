@@ -97,9 +97,23 @@ def make_feature_dataset(
 ) -> DataSet:
     """URL 원문을 구조 Feature DataSet으로 변환한다."""
 
+    feature_frame = features.build_url_dataset(urls)
+
+    # clean_feature_matrix 함수 활용으로 x 정리
+    X = features.clean_feature_matrix(feature_frame)
+
+    # labels가 None이면 y도 None으로 설정
+    y = (
+        list(labels)
+        if labels is not None
+        else None
+    )
 
     return DataSet(
-       
+        X=X,
+        y=y,
+        name=name,
+        random_state=random_state
     )
 
 
