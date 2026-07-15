@@ -89,6 +89,15 @@ SafeMate-AI/
 | `models/` | 학습된 모델과 전처리기 파일 |
 | `tests/` | 파서, 분석기, 파이프라인, UI 테스트 |
 
+### 분석 후 후속 채팅 경계
+
+- 후속 채팅은 `analysis_status`가 성공이고 `analysis_result`가 존재할 때만 노출한다.
+- 1차 분류 입력에는 사용자의 채팅 질문을 포함하지 않는다.
+- LLM에는 허용 목록으로 선택한 분석 결과 필드만 JSON 스냅샷으로 전달한다.
+- Web Search는 기본 제공하고 `OPENAI_VECTOR_STORE_ID`가 있을 때만 File Search를 추가한다.
+- 대화 기록은 Streamlit 세션에만 유지하고 Responses API는 `store: false`로 호출한다.
+- 입력 해시 변경, 재분석, 입력 유형 변경 또는 초기화 시 채팅 상태를 제거한다.
+
 `data/raw/`에는 학습용 원천 데이터만 저장하며 사용자가 입력한 SMS와 업로드한 이메일은 저장하지 않는다. 비밀정보와 모델 대용량 파일의 Git 추적 여부는 `.gitignore`에서 관리한다.
 
 ## 4. 담당 경계
@@ -465,6 +474,26 @@ URL 후보의 내부 형식:
   "input_index": 0
 }
 ```
+
+HTML 링크의 표시 텍스트에 URL이 포함된 경우 다음 메타데이터를 추가한다.
+
+```json
+{
+  "url": "https://evil.example/login",
+  "source_type": "href",
+  "input_index": 0,
+  "displayed_url": "https://official.example/login",
+  "displayed_domain": "official.example",
+  "destination_domain": "evil.example",
+  "display_href_mismatch": true,
+  "signals": ["표시 주소와 실제 연결 도메인이 다릅니다."]
+}
+```
+
+- 비교를 위해 호스트를 소문자·IDNA ASCII 형태로 정규화하고 선행 `www.`를 제거한다.
+- 한쪽 도메인이 다른 쪽의 정상적인 하위 도메인이면 같은 도메인 계열로 처리한다.
+- 상대경로와 `javascript:`, `mailto:`, `data:`, `cid:` 링크는 외부 URL 후보로 만들지 않는다.
+- 이 검사는 URL에 접속하거나 리디렉션을 따라가지 않는 정적 문자열 검사다.
 반환 항목에는 원본 위치 정보를 포함한다.
 
 ```json
