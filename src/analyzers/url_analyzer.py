@@ -26,7 +26,7 @@ from src.analyzers.url import (  # noqa: F401
     extract_url_features,
 )
 
-DEFAULT_MODEL_PATH = MODELS_DIR / "url_feature_model.joblib"
+DEFAULT_MODEL_PATH = MODELS_DIR / "url_char_model.joblib"
 DEFAULT_TFIDF_MODEL_PATH = MODELS_DIR / "url_tfidf_model.joblib"
 DEFAULT_MODEL_PATHS = {
     "feature": DEFAULT_MODEL_PATH,
