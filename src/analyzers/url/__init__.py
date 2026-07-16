@@ -19,16 +19,14 @@ from src.analyzers.url.features import (
     normalize_url,
 )
 from src.analyzers.url.schemas import DataSet, ModelBundle
-from src.analyzers.url.training import (
-    MODEL_FACTORIES,
-    create_model,
+from src.analyzers.url.datasets import (
     load_feature_csv,
     load_url_csv,
     make_feature_dataset,
     make_tfidf_dataset,
-    train_model,
-    tune_hyperparameters,
 )
+from src.analyzers.url.model_registry import MODEL_FACTORIES, create_model
+from src.analyzers.url.training import train_model, tune_hyperparameters
 
 try:
     from src.analyzers.url.prediction import analyze_url, analyze_urls, predict_urls

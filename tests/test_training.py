@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.analyzers.url import features, training, datasets
+from src.analyzers.url import features, training, datasets, model_registry
 from src.analyzers.url.schemas import ModelBundle
 
 
@@ -152,15 +152,15 @@ def test_train_model_tfidf_flow_train_predict(sample_urls_and_labels):
 def test_exception_handling_paths(sample_urls_and_labels):
     urls, labels = sample_urls_and_labels
 
-    ds_no_label = training.make_feature_dataset(urls, labels=None)
+    ds_no_label = datasets.make_feature_dataset(urls, labels=None)
     with pytest.raises(ValueError, match=r"라벨\(y\)이 필요"):
         training.train_model(ds_no_label)
 
-    ds_tfidf, _ = training.make_tfidf_dataset(urls, labels=labels)
+    ds_tfidf, _ = datasets.make_tfidf_dataset(urls, labels=labels)
     with pytest.raises(ValueError, match="vectorizer가 필요"):
         training.train_model(ds_tfidf, kind="tfidf", vectorizer=None)
 
-    ds_feature = training.make_feature_dataset(urls, labels=labels)
-    model = training.create_model("randomforest", random_state=42, n_estimators=10)
+    ds_feature = datasets.make_feature_dataset(urls, labels=labels)
+    model = model_registry.create_model("randomforest", random_state=42, n_estimators=10)
     with pytest.raises(ValueError, match="탐색 공간"):
         training.tune_hyperparameters(model, ds_feature, model_type="unknown", n_iter=1, cv=2)
