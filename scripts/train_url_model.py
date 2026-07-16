@@ -25,6 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -171,6 +172,38 @@ def _n_rows(x):
     return x.shape[0]
 
 
+class HoldoutSpill:
+    """holdout 행렬을 디스크에 저장해 학습 동안 RAM에서 해방한다.
+
+    평가는 각 모델 fit 직후에만 필요한데 행렬을 학습 내내 들고 있으면
+    fit 정점 메모리에 그대로 얹힌다. /tmp는 tmpfs(램)일 수 있어
+    프로젝트 안 디렉터리에 저장한다.
+    """
+
+    def __init__(self, x, tag: str, spill_dir: Path):
+        spill_dir.mkdir(parents=True, exist_ok=True)
+        self._columns = list(x.columns) if hasattr(x, "columns") else None
+        self._sparse = sparse.issparse(x)
+        suffix = "npz" if self._sparse else "npy"
+        self.path = spill_dir / f"holdout_{tag}.{suffix}"
+        if self._sparse:
+            sparse.save_npz(self.path, x.tocsr())
+        else:
+            arr = x.to_numpy() if self._columns else np.asarray(x)
+            np.save(self.path, arr)
+
+    def load(self):
+        if self._sparse:
+            return sparse.load_npz(self.path)
+        arr = np.load(self.path)
+        if self._columns:
+            return pd.DataFrame(arr, columns=self._columns)
+        return arr
+
+    def cleanup(self):
+        self.path.unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # 모델 1개 학습
 # ---------------------------------------------------------------------------
@@ -179,7 +212,7 @@ def train_one(
     model_type,
     x_train,
     y_train,
-    x_test,
+    x_test_spill,
     y_test,
     encoder,
     args,
@@ -230,12 +263,15 @@ def train_one(
     fit_seconds = time.time() - started
     log.info("%s 본 학습 완료 %.0fs", model_type, fit_seconds)
 
-    # holdout 평가
+    # holdout 평가 — 학습 동안 디스크에 있던 holdout을 여기서만 올린다
+    n_train = _n_rows(fit_x)
+    del fit_x, fit_y
+    x_test = x_test_spill.load()
     pred = model.predict(x_test)
     metrics = {
         "accuracy": float(accuracy_score(y_test, pred)),
         "f1_macro": float(f1_score(y_test, pred, average="macro")),
-        "n_train": _n_rows(fit_x),
+        "n_train": n_train,
         "n_test": _n_rows(x_test),
         "fit_seconds": round(fit_seconds, 1),
     }
@@ -251,6 +287,7 @@ def train_one(
             metrics["roc_auc"] = float(
                 roc_auc_score(y_test == risk_idx, proba[:, risk_idx])
             )
+    del x_test
     log.info("%s holdout: %s", model_type, metrics)
 
     bundle = ModelBundle(
@@ -313,6 +350,10 @@ def main():
     parser.add_argument("--char-max-len", type=int, default=128,
                         help="charlstm 입력 문자 시퀀스 최대 길이")
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--spill-dir", type=Path,
+                        default=MODELS_DIR.parent / "data" / "tmp",
+                        help="holdout 행렬 임시 저장 위치 "
+                             "(/tmp는 tmpfs=램이라 프로젝트 경로 사용)")
     parser.add_argument("--log-file",
                         default=Path(__file__).with_suffix(".log"))
     args = parser.parse_args()
@@ -393,6 +434,10 @@ def main():
             )
             del tfidf_urls_train
 
+        # holdout은 평가 때만 필요하니 디스크로 내려 fit 정점에서 제외
+        x_test_spill = HoldoutSpill(x_test, representation, args.spill_dir)
+        del x_test
+
         for model_type in args.models:
             # charlstm은 문자 입력 전용, 나머지 모델은 수치 입력 전용
             if (model_type in CHAR_ONLY_MODELS) != (representation == "char"):
@@ -402,13 +447,14 @@ def main():
                 model_type,
                 x_train,
                 rep_y_train,
-                x_test,
+                x_test_spill,
                 y_test,
                 encoder,
                 args,
                 kind=representation,
                 vectorizer=vectorizer,
             )
+        x_test_spill.cleanup()
 
         # 4) representation별 최고 성능(f1_macro) 모델을 기본 경로로 저장
         rep_bundles = {
