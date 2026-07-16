@@ -36,6 +36,7 @@ from src.analyzers.url import prediction, training
 from src.analyzers.url.constants import MODELS_DIR, URL_BINARY_CSV
 from src.analyzers.url.features import (
     FEATURE_NAMES,
+    CharTokenizer,
     canonicalize_url_for_tfidf,
     extract_url_features,
 )
@@ -48,17 +49,26 @@ DEFAULT_MODEL_PATH = MODELS_DIR / "url_feature_model.joblib"
 DEFAULT_MODEL_PATHS = {
     "feature": MODELS_DIR / "url_feature_model.joblib",
     "tfidf": MODELS_DIR / "url_tfidf_model.joblib",
+    "char": MODELS_DIR / "url_char_model.joblib",
 }
+
+# charlstm은 문자 id 입력이 필요하고, 나머지는 수치 feature 입력이 필요하다
+CHAR_ONLY_MODELS = {"charlstm"}
 
 # 전체(16.5M행) 학습이 비현실적으로 느린 모델은 학습 표본을 상한으로 자른다
 MAX_FIT_ROWS = {
     "randomforest": 2_000_000,
     "lstm": 2_000_000,
+    "charlstm": 2_000_000,
     "logistic": 4_000_000,  # lbfgs는 이 이상에서 시간 대비 이득이 없음
 }
 
-# LSTM은 17M 스케일에 맞게 기본값보다 큰 배치/짧은 epoch 사용
-LSTM_PARAMS = dict(hidden_size=64, epochs=5, batch_size=1024, lr=1e-3)
+# LSTM류는 17M 스케일에 맞게 기본값보다 큰 배치/짧은 epoch 사용
+MODEL_FIT_PARAMS = {
+    "lstm": dict(hidden_size=64, epochs=5, batch_size=1024, lr=1e-3),
+    "charlstm": dict(hidden_size=128, embed_dim=32, epochs=5,
+                     batch_size=1024, lr=1e-3),
+}
 
 SANITY_URLS = [
     "https://www.google.com/search?q=hello",
@@ -133,6 +143,26 @@ def build_tfidf_matrices(urls_train, urls_test, args):
     return x_train, x_test, vectorizer
 
 
+def build_char_matrices(urls_train, urls_test, args):
+    started = time.time()
+    tokenizer = CharTokenizer(max_len=args.char_max_len)
+    log.info("char 인코딩 시작 (n=%s, max_len=%d)",
+             f"{len(urls_train):,}", args.char_max_len)
+    x_train = tokenizer.transform([
+        canonicalize_url_for_tfidf(u) for u in urls_train
+    ])
+    x_test = tokenizer.transform([
+        canonicalize_url_for_tfidf(u) for u in urls_test
+    ])
+    log.info(
+        "char 인코딩 완료: train=%s test=%s, %.0fs",
+        x_train.shape,
+        x_test.shape,
+        time.time() - started,
+    )
+    return x_train, x_test, tokenizer
+
+
 def _row_subset(x, idx):
     return x.iloc[idx] if hasattr(x, "iloc") else x[idx]
 
@@ -157,13 +187,17 @@ def train_one(
     vectorizer=None,
 ):
     random_state = args.random_state
-    params = dict(LSTM_PARAMS) if model_type == "lstm" else {}
+    params = dict(MODEL_FIT_PARAMS.get(model_type, {}))
+    if model_type == "charlstm" and vectorizer is not None:
+        params["vocab_size"] = vectorizer.vocab_size
 
     model = create_model(model_type, random_state, **params)
     best_params = dict(params)
 
     # 튜닝은 서브샘플로 (전체 데이터 RandomizedSearchCV는 비현실적)
-    tune = args.tune and (model_type != "lstm" or args.tune_lstm)
+    tune = args.tune and (
+        model_type not in ("lstm", "charlstm") or args.tune_lstm
+    )
     if tune:
         n = min(args.tune_sample, _n_rows(x_train))
         idx = np.random.default_rng(random_state).choice(
@@ -246,8 +280,8 @@ def main():
     parser.add_argument("--models", nargs="+", default=sorted(MODEL_FACTORIES),
                         choices=sorted(MODEL_FACTORIES))
     parser.add_argument("--representations", nargs="+", default=["feature"],
-                        choices=["feature", "tfidf"],
-                        help="Train lexical feature models, TF-IDF models, or both.")
+                        choices=["feature", "tfidf", "char"],
+                        help="lexical feature / TF-IDF / 문자 시퀀스(charlstm 전용)")
     parser.add_argument("--nrows", type=int, default=None,
                         help="전체 대신 랜덤 표본 n행만 사용 (시험용)")
     parser.add_argument("--test-size", type=float, default=0.05)
@@ -269,6 +303,8 @@ def main():
     parser.add_argument("--tfidf-svd-dims", type=int, default=None,
                         help="TruncatedSVD로 축소할 차원 수 "
                              "(LSTM 등 밀집 입력 모델용, 기본: 축소 안 함)")
+    parser.add_argument("--char-max-len", type=int, default=128,
+                        help="charlstm 입력 문자 시퀀스 최대 길이")
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--log-file",
                         default=Path(__file__).with_suffix(".log"))
@@ -319,6 +355,12 @@ def main():
             x_train = extract_features_parallel(urls_train, workers=args.workers)
             x_test = extract_features_parallel(urls_test, workers=args.workers)
             vectorizer = None
+        elif representation == "char":
+            x_train, x_test, vectorizer = build_char_matrices(
+                urls_train,
+                urls_test,
+                args,
+            )
         else:
             x_train, x_test, vectorizer = build_tfidf_matrices(
                 urls_train,
@@ -327,6 +369,9 @@ def main():
             )
 
         for model_type in args.models:
+            # charlstm은 문자 입력 전용, 나머지 모델은 수치 입력 전용
+            if (model_type in CHAR_ONLY_MODELS) != (representation == "char"):
+                continue
             key = f"{representation}:{model_type}"
             bundles[key] = train_one(
                 model_type,
@@ -345,6 +390,10 @@ def main():
             key: bundle for key, bundle in bundles.items()
             if key.startswith(f"{representation}:")
         }
+        if not rep_bundles:
+            log.info("%s: 호환되는 모델이 없어 건너뜀 (models=%s)",
+                     representation, args.models)
+            continue
         best_key = max(rep_bundles, key=lambda k: rep_bundles[k].metrics["f1_macro"])
         best_f1 = rep_bundles[best_key].metrics["f1_macro"]
         default_path = DEFAULT_MODEL_PATHS[representation]

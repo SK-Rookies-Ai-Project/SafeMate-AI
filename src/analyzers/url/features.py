@@ -454,6 +454,35 @@ def build_tfidf_vectorizer(**overrides) -> TfidfVectorizer:
     return TfidfVectorizer(**params)
 
 
+class CharTokenizer:
+    """URL 문자열 → 고정 길이 문자 id 행렬 (문자 단위 LSTM 입력).
+
+    어휘는 인쇄 가능한 ASCII(33~126)로 고정: 0=패딩, 1=미지 문자(비ASCII 등).
+    fit이 필요 없어 학습/추론 간 어휘 불일치가 원천적으로 없다.
+    ModelBundle.transform이 vectorizer처럼 transform()을 호출한다.
+    """
+
+    PAD = 0
+    UNK = 1
+
+    def __init__(self, max_len: int = 128):
+        self.max_len = max_len
+        self.vocab_size = 2 + (127 - 33)  # PAD/UNK + ASCII 94자 = 96
+        lut = np.full(256, self.UNK, dtype=np.int32)
+        for offset, code in enumerate(range(33, 127)):
+            lut[code] = offset + 2
+        self._lut = lut
+
+    def transform(self, texts) -> np.ndarray:
+        out = np.zeros((len(texts), self.max_len), dtype=np.int32)
+        for i, text in enumerate(texts):
+            raw = np.frombuffer(
+                str(text).encode("utf-8")[: self.max_len], dtype=np.uint8
+            )
+            out[i, : len(raw)] = self._lut[raw]
+        return out
+
+
 def svd_transform_chunked(svd, x, chunk_rows: int = 1_000_000) -> np.ndarray:
     """SVD transform을 청크로 나눠 float32로 수행.
 

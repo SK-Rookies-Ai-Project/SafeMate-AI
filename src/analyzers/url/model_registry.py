@@ -173,10 +173,115 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
         return self.classes_[self.predict_proba(x).argmax(axis=1)]
 
 
+class CharLSTMClassifier(BaseEstimator, ClassifierMixin):
+    """URL을 문자 id 시퀀스로 받아 학습하는 문자 단위 PyTorch LSTM 분류기.
+
+    입력은 CharTokenizer(features.py)가 만드는 (n, max_len) int 행렬이다
+    (0=패딩). embedding → LSTM → 마지막 유효 문자의 hidden state → linear.
+    TF-IDF/SVD 없이 문자 패턴을 직접 학습한다.
+    """
+
+    def __init__(self, vocab_size=96, embed_dim=32, hidden_size=128,
+                 num_layers=1, dropout=0.0, epochs=5, batch_size=1024,
+                 lr=1e-3, device="auto", random_state=42):
+        self.vocab_size = vocab_size  # CharTokenizer.vocab_size와 일치해야 함
+        self.embed_dim = embed_dim
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.lr = lr
+        self.device = device  # 'auto' | 'cpu' | 'cuda'
+        self.random_state = random_state
+
+    _torch = staticmethod(LSTMClassifier._torch)
+    _resolve_device = LSTMClassifier._resolve_device
+
+    def _forward(self, xb, torch):
+        # 패딩을 무시하도록 pack해서 각 URL의 마지막 실제 문자 hidden을 쓴다
+        emb = self.model_["embed"](xb)
+        lengths = (xb != 0).sum(dim=1).clamp(min=1).cpu()
+        packed = torch.nn.utils.rnn.pack_padded_sequence(
+            emb, lengths, batch_first=True, enforce_sorted=False
+        )
+        _, (h_n, _) = self.model_["lstm"](packed)
+        return self.model_["head"](h_n[-1])
+
+    def fit(self, x, y):
+        torch, nn = self._torch()
+        torch.manual_seed(self.random_state)
+        dev = self._resolve_device(torch)
+
+        self.classes_, y_idx = np.unique(y, return_inverse=True)
+        # int32로 들고 있다가 배치에서만 int64 텐서로 변환 (전체 int64는 2배 메모리)
+        x = np.ascontiguousarray(x, dtype=np.int32)
+        yt = torch.from_numpy(y_idx.astype(np.int64))
+
+        embed = nn.Embedding(self.vocab_size, self.embed_dim, padding_idx=0)
+        lstm = nn.LSTM(
+            input_size=self.embed_dim,
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
+            dropout=self.dropout if self.num_layers > 1 else 0.0,
+            batch_first=True,
+        )
+        head = nn.Linear(self.hidden_size, len(self.classes_))
+        self.model_ = nn.ModuleDict(
+            {"embed": embed, "lstm": lstm, "head": head}
+        ).to(dev)
+
+        optimizer = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
+        loss_fn = nn.CrossEntropyLoss()
+        loader = torch.utils.data.DataLoader(
+            torch.arange(x.shape[0]), batch_size=self.batch_size, shuffle=True,
+            generator=torch.Generator().manual_seed(self.random_state),
+        )
+
+        self.model_.train()
+        for _ in range(self.epochs):
+            for bidx in loader:
+                xb = torch.from_numpy(
+                    x[bidx.numpy()].astype(np.int64)
+                ).to(dev)
+                optimizer.zero_grad()
+                loss = loss_fn(self._forward(xb, torch), yt[bidx].to(dev))
+                loss.backward()
+                optimizer.step()
+        # 저장(pickle)·추론 호환성을 위해 학습 후 CPU로 이동
+        self.model_.to("cpu")
+        return self
+
+    def predict_proba(self, x, batch_size: int = 8192):
+        torch, _ = self._torch()
+        dev = self._resolve_device(torch)
+        self.model_.to(dev).eval()
+        x = np.ascontiguousarray(x, dtype=np.int32)
+        outs = []
+        with torch.no_grad():
+            for i in range(0, x.shape[0], batch_size):
+                xb = torch.from_numpy(
+                    x[i:i + batch_size].astype(np.int64)
+                ).to(dev)
+                logits = self._forward(xb, torch)
+                outs.append(torch.softmax(logits, dim=1).cpu())
+        self.model_.to("cpu")
+        return torch.cat(outs).numpy()
+
+    def predict(self, x):
+        return self.classes_[self.predict_proba(x).argmax(axis=1)]
+
+
 def _make_lstm(random_state: int, **params: Any):
     defaults = dict(hidden_size=64, epochs=10)
     defaults.update(params)
     return LSTMClassifier(random_state=random_state, **defaults)
+
+
+def _make_charlstm(random_state: int, **params: Any):
+    defaults = dict(hidden_size=128, epochs=5)
+    defaults.update(params)
+    return CharLSTMClassifier(random_state=random_state, **defaults)
 
 
 MODEL_FACTORIES = {
@@ -184,6 +289,7 @@ MODEL_FACTORIES = {
     "xgboost": _make_xgboost,
     "logistic": _make_logistic,
     "lstm": _make_lstm,
+    "charlstm": _make_charlstm,
 }
 
 # tune=True일 때 RandomizedSearchCV에 쓰는 기본 탐색 공간
@@ -213,6 +319,14 @@ DEFAULT_PARAM_DISTRIBUTIONS = {
         "epochs": [5, 10, 20],
         "lr": [1e-3, 3e-3, 1e-2],
         "batch_size": [32, 64, 128],
+    },
+    "charlstm": {
+        "embed_dim": [16, 32, 64],
+        "hidden_size": [64, 128, 256],
+        "num_layers": [1, 2],
+        "epochs": [3, 5, 10],
+        "lr": [1e-3, 3e-3],
+        "batch_size": [512, 1024],
     },
 }
 

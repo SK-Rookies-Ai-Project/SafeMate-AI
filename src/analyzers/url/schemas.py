@@ -55,7 +55,8 @@ class DataSet:
 class ModelBundle:
     """학습된 모델 + 전처리기 + 메타데이터 묶음. joblib으로 저장/로딩.
 
-    kind: 'feature'(유형1, lexical feature) 또는 'tfidf'(유형2)
+    kind: 'feature'(유형1, lexical feature), 'tfidf'(유형2),
+        'char'(문자 id 시퀀스, CharTokenizer)
     """
 
     model: Any
@@ -75,9 +76,9 @@ class ModelBundle:
             if self.feature_names:
                 df = df[self.feature_names]
             return df
-        if self.kind == "tfidf":
+        if self.kind in ("tfidf", "char"):
             if self.vectorizer is None:
-                raise ValueError("tfidf 번들에 vectorizer가 없습니다.")
+                raise ValueError(f"{self.kind} 번들에 vectorizer가 없습니다.")
             return self.vectorizer.transform(
                 [features.canonicalize_url_for_tfidf(u) for u in urls]
             )

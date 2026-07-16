@@ -31,6 +31,7 @@ DEFAULT_TFIDF_MODEL_PATH = MODELS_DIR / "url_tfidf_model.joblib"
 DEFAULT_MODEL_PATHS = {
     "feature": DEFAULT_MODEL_PATH,
     "tfidf": DEFAULT_TFIDF_MODEL_PATH,
+    "char": MODELS_DIR / "url_char_model.joblib",
 }
 
 

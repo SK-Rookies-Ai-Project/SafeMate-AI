@@ -11,6 +11,7 @@ from src.analyzers.url.constants import (
 )
 from src.analyzers.url.features import (
     FEATURE_NAMES,
+    CharTokenizer,
     build_tfidf_vectorizer,
     build_url_dataset,
     clean_feature_matrix,
@@ -41,6 +42,7 @@ __all__ = [
     "SAFE_VERDICT",
     "URL_BINARY_CSV",
     "FEATURE_NAMES",
+    "CharTokenizer",
     "build_tfidf_vectorizer",
     "build_url_dataset",
     "clean_feature_matrix",
