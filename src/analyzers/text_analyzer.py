@@ -1,1 +1,1 @@
-"""Message model analyzer entry points."""
+"""text analyzer module."""

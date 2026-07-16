@@ -1,1 +1,1 @@
-"""URL model analyzer entry points."""
+"""url analyzer module."""
