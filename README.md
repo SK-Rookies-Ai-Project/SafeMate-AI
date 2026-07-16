@@ -16,5 +16,3 @@ Streamlit 기반 AI 보안 비서 프로젝트입니다.
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-현재 저장소는 팀 개발을 위한 초기 프로젝트 구조입니다.
