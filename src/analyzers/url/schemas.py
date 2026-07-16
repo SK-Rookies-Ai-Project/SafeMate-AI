@@ -79,7 +79,7 @@ class ModelBundle:
             if self.vectorizer is None:
                 raise ValueError("tfidf 번들에 vectorizer가 없습니다.")
             return self.vectorizer.transform(
-                [features.clean_url(u) for u in urls]
+                [features.canonicalize_url_for_tfidf(u) for u in urls]
             )
         raise ValueError(f"알 수 없는 kind: {self.kind!r}")
 

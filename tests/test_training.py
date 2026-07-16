@@ -89,6 +89,23 @@ def test_make_feature_dataset_builds_expected_shape(sample_urls_and_labels):
     assert list(ds.x.columns) == list(features.FEATURE_NAMES)
 
 
+def test_canonicalize_url_for_tfidf_removes_transport_noise():
+    variants = [
+        "www.naver.com",
+        "https://www.naver.com/",
+        "http://naver.com/",
+    ]
+
+    assert {
+        features.canonicalize_url_for_tfidf(url)
+        for url in variants
+    } == {"naver.com"}
+    assert (
+        features.canonicalize_url_for_tfidf("https://www.google.com/search?q=Hi")
+        == "google.com/search?q=hi"
+    )
+
+
 def test_importance_tuning_params_drops_low_importance_features(sample_urls_and_labels):
     if not hasattr(training, "importance_tuning_params"):
         pytest.skip("importance_tuning_params is not available in this training module version")

@@ -26,6 +26,24 @@ from src.analyzers.url import (  # noqa: F401
 )
 
 DEFAULT_MODEL_PATH = MODELS_DIR / "url_feature_model.joblib"
+DEFAULT_TFIDF_MODEL_PATH = MODELS_DIR / "url_tfidf_model.joblib"
+DEFAULT_MODEL_PATHS = {
+    "feature": DEFAULT_MODEL_PATH,
+    "tfidf": DEFAULT_TFIDF_MODEL_PATH,
+}
+
+
+def resolve_model_path(
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
+) -> Path:
+    """Return an explicit model path or the default path for a model kind."""
+    if model_path is not None:
+        return Path(model_path)
+    try:
+        return DEFAULT_MODEL_PATHS[model_kind]
+    except KeyError as exc:
+        raise ValueError(f"unsupported url model kind: {model_kind!r}") from exc
 
 
 def load_model(path: Union[str, Path] = DEFAULT_MODEL_PATH) -> ModelBundle:
@@ -47,23 +65,71 @@ def train_default_model(
     return bundle
 
 
-def analyze_urls(
-    urls: Sequence[str],
+def analyze_url(
+    url: str,
     bundle: Optional[ModelBundle] = None,
     model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
 ) -> dict:
+    """Analyze one URL and return the SafeMate URL model contract."""
+    validation_error = prediction.validate_url(url)
+    if validation_error:
+        return {
+            "status": "error",
+            "url": url if isinstance(url, str) else "",
+            "label": "unknown",
+            "risk_score": None,
+            "signals": [],
+            "features": [],
+            "model_version": prediction.MODEL_VERSION,
+            "error": validation_error,
+        }
+    try:
+        if bundle is None:
+            bundle = get_default_model(model_path)
+        return prediction.analyze_url(bundle, url)
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "url": url if isinstance(url, str) else "",
+            "label": "unknown",
+            "risk_score": None,
+            "signals": [],
+            "features": [],
+            "model_version": prediction.MODEL_VERSION,
+            "error": "url model is not available",
+        }
+    except Exception:
+        return {
+            "status": "error",
+            "url": url if isinstance(url, str) else "",
+            "label": "unknown",
+            "risk_score": None,
+            "signals": [],
+            "features": [],
+            "model_version": prediction.MODEL_VERSION,
+            "error": "url analysis failed",
+        }
+
+
+def analyze_urls(
+    urls: Sequence[str],
+    bundle: Optional[ModelBundle] = None,
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
+) -> dict:
     """URL 배열 → {링크: '위험'/'안전'} 딕셔너리 (프로그램 최종 출력 형식)."""
     if bundle is None:
-        bundle = load_model(model_path)
+        bundle = get_default_model(model_path)
     return prediction.analyze_urls(bundle, urls)
 
 
 def analyze_urls_detail(
     urls: Sequence[str],
     bundle: Optional[ModelBundle] = None,
-    model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
 ) -> list:
     """상세 결과(라벨, 위험 점수, 판단 근거 포함) — 디버그/UI용."""
     if bundle is None:
-        bundle = load_model(model_path)
+        bundle = get_default_model(model_path)
     return prediction.predict_urls(bundle, urls)

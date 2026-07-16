@@ -233,6 +233,35 @@ def normalize_url(url: str) -> str:
     return url
 
 
+def canonicalize_url_for_tfidf(url: str) -> str:
+    """Canonical text used by TF-IDF models for train/serve consistency.
+
+    TF-IDF should learn domain, path, and query patterns instead of incidental
+    transport spelling such as http vs https, leading www, or a root slash.
+    """
+    raw = clean_url(str(url)).lower()
+    try:
+        parsed = urlparse(normalize_url(raw))
+        host = parsed.hostname or ""
+        if host.startswith("www."):
+            host = host[4:]
+
+        port = ""
+        try:
+            parsed_port = parsed.port
+        except ValueError:
+            parsed_port = None
+        if parsed_port and parsed_port not in {80, 443}:
+            port = f":{parsed_port}"
+
+        path = re.sub(r"/+", "/", parsed.path or "").rstrip("/")
+        query = f"?{parsed.query}" if parsed.query else ""
+        canonical = f"{host}{port}{path}{query}"
+        return canonical or raw
+    except Exception:
+        return re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", raw).rstrip("/")
+
+
 # ---------------------------------------------------------------------------
 # 유형1 — lexical feature 추출
 # ---------------------------------------------------------------------------

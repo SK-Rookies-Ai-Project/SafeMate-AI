@@ -21,6 +21,7 @@ env/
 # Models and generated artifacts
 models/*.joblib
 models/*.pkl
+models/*.sqlite3
 outputs/
 logs/
 scripts/*.log

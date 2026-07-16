@@ -7,7 +7,6 @@ from src.analyzers.url.constants import (
     RISK_VERDICT,
     SAFE_VERDICT,
 )
-from src.analyzers.url.schemas import ModelBundle
 
 
 def label_to_verdict(label) -> str:
@@ -43,6 +42,45 @@ def predict_urls(bundle: ModelBundle, urls: Sequence[str]) -> list:
             "proba": proba_row,
         })
     return results
+
+
+def label_to_contract_label(label: Any, risk_score: Optional[float]) -> str:
+    label_text = str(label).strip().lower()
+    benign_labels = {str(v).lower() for v in BENIGN_LABELS}
+    if label_text in benign_labels:
+        return "benign"
+    if label_text in {"malware", "malicious", "bad", "악성"}:
+        return "malicious"
+    if label_text in {"phishing", "spam", "suspicious", "위험", "낚시"}:
+        return "suspicious"
+    if risk_score is None:
+        return "unknown"
+    return "malicious" if risk_score >= 0.85 else "suspicious"
+
+
+def analyze_url(bundle: ModelBundle, url: str) -> dict:
+    """Single URL inference result matching the SafeMate UI contract."""
+    validation_error = validate_url(url)
+    if validation_error:
+        return _empty_contract(url, validation_error)
+
+    try:
+        prediction = predict_urls(bundle, [url])[0]
+        risk_score = prediction["risk_score"]
+        if risk_score is not None:
+            risk_score = round(max(0.0, min(float(risk_score), 1.0)), 4)
+        return {
+            "status": "success",
+            "url": url,
+            "label": label_to_contract_label(prediction["label"], risk_score),
+            "risk_score": risk_score,
+            "signals": build_signals(url),
+            "features": explain_features(url),
+            "model_version": MODEL_VERSION,
+            "error": None,
+        }
+    except Exception:
+        return _empty_contract(url, "url analysis failed")
 
 
 def analyze_urls(bundle: ModelBundle, urls: Sequence[str]) -> dict:
