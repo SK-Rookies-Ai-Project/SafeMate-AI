@@ -34,7 +34,7 @@ from sklearn.metrics import (
 # 1. 기본 경로 설정
 
 DEFAULT_DATA_PATH = 'data/raw/korean_spam_ham_binary_dataset_6272row.csv'
-DEFAULT_MODEL_PATH = 'models/email_spam_logistic_word_char_tfidf.pkl'
+DEFAULT_MODEL_PATH = 'models/email_spam_model.pkl'
 
 
 # 2. 데이터 불러오기 함수
