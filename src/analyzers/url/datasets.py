@@ -132,7 +132,7 @@ def make_tfidf_dataset(
     """
 
     cleaned_urls = [
-        features.clean_url(url)
+        features.canonicalize_url_for_tfidf(url)
         for url in urls
     ]
 

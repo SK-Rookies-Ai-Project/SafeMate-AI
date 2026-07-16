@@ -1,7 +1,14 @@
-"""Public entry points for SafeMate URL analysis.
+"""URL 위험도 분석 메인 진입 파일.
 
-UI and pipeline code should call analyze_url(url) for a single URL. The trained
-model bundle is loaded once and then reused by an in-process cache.
+세부 구현은 src/analyzers/url/ 서브패키지에 있고, 여기서는 외부(파이프라인,
+UI)가 쓰는 진입 API만 노출한다.
+
+사용 예:
+    from src.analyzers.url_analyzer import analyze_urls, train_default_model
+
+    bundle = train_default_model()            # 또는 ModelBundle.load(path)
+    result = analyze_urls(urls, bundle=bundle)
+    # → {"http://...": "위험", "https://...": "안전", ...}
 """
 
 from functools import lru_cache
@@ -12,7 +19,7 @@ from src.analyzers.url import prediction, training
 from src.analyzers.url.constants import MODELS_DIR
 from src.analyzers.url.schemas import DataSet, ModelBundle
 
-# Backward-compatible re-exports used by older code/tests.
+# 기존 import 호환용 재노출
 from src.analyzers.url import (  # noqa: F401
     FEATURE_NAMES,
     build_url_dataset,
@@ -20,10 +27,29 @@ from src.analyzers.url import (  # noqa: F401
 )
 
 DEFAULT_MODEL_PATH = MODELS_DIR / "url_feature_model.joblib"
+DEFAULT_TFIDF_MODEL_PATH = MODELS_DIR / "url_tfidf_model.joblib"
+DEFAULT_MODEL_PATHS = {
+    "feature": DEFAULT_MODEL_PATH,
+    "tfidf": DEFAULT_TFIDF_MODEL_PATH,
+    "char": MODELS_DIR / "url_char_model.joblib",
+}
+
+
+def resolve_model_path(
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
+) -> Path:
+    """Return an explicit model path or the default path for a model kind."""
+    if model_path is not None:
+        return Path(model_path)
+    try:
+        return DEFAULT_MODEL_PATHS[model_kind]
+    except KeyError as exc:
+        raise ValueError(f"unsupported url model kind: {model_kind!r}") from exc
 
 
 def load_model(path: Union[str, Path] = DEFAULT_MODEL_PATH) -> ModelBundle:
-    """Load a saved URL ModelBundle from disk."""
+    """저장된 모델 번들 로딩."""
     return ModelBundle.load(path)
 
 
@@ -45,9 +71,36 @@ def train_default_model(
     save_path: Optional[Union[str, Path]] = DEFAULT_MODEL_PATH,
     nrows: Optional[int] = None,
 ) -> ModelBundle:
-    """Train the default feature model from All.csv and optionally save it."""
+    """All.csv로 기본 feature 모델을 학습하고 저장."""
     dataset = training.load_feature_csv(nrows=nrows)
     bundle = training.train_model(dataset, model_type=model_type, tune=tune)
+    if save_path:
+        bundle.save(save_path)
+        _load_model_cached.cache_clear()
+    return bundle
+
+
+def train_default_tfidf_model(
+    model_type: str = "logistic",
+    tune: bool = False,
+    save_path: Optional[Union[str, Path]] = DEFAULT_TFIDF_MODEL_PATH,
+    nrows: Optional[int] = None,
+    **vectorizer_params,
+) -> ModelBundle:
+    """Train a default TF-IDF URL model from raw URLs and optionally save it."""
+    urls, labels = training.load_url_csv(nrows=nrows)
+    dataset, vectorizer = training.make_tfidf_dataset(
+        urls,
+        labels=labels,
+        **vectorizer_params,
+    )
+    bundle = training.train_model(
+        dataset,
+        model_type=model_type,
+        kind="tfidf",
+        vectorizer=vectorizer,
+        tune=tune,
+    )
     if save_path:
         bundle.save(save_path)
         _load_model_cached.cache_clear()
@@ -57,7 +110,8 @@ def train_default_model(
 def analyze_url(
     url: str,
     bundle: Optional[ModelBundle] = None,
-    model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
 ) -> dict:
     """Analyze one URL and return the SafeMate URL model contract."""
     validation_error = prediction.validate_url(url)
@@ -74,7 +128,7 @@ def analyze_url(
         }
     try:
         if bundle is None:
-            bundle = get_default_model(model_path)
+            bundle = get_default_model(resolve_model_path(model_path, model_kind))
         return prediction.analyze_url(bundle, url)
     except FileNotFoundError:
         return {
@@ -103,20 +157,22 @@ def analyze_url(
 def analyze_urls(
     urls: Sequence[str],
     bundle: Optional[ModelBundle] = None,
-    model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
 ) -> dict:
-    """Legacy batch API: return {url: verdict}."""
+    """URL 배열 → {링크: '위험'/'안전'} 딕셔너리 (프로그램 최종 출력 형식)."""
     if bundle is None:
-        bundle = get_default_model(model_path)
+        bundle = get_default_model(resolve_model_path(model_path, model_kind))
     return prediction.analyze_urls(bundle, urls)
 
 
 def analyze_urls_detail(
     urls: Sequence[str],
     bundle: Optional[ModelBundle] = None,
-    model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
 ) -> list:
-    """Legacy batch API: return detailed prediction rows."""
+    """상세 결과(라벨, 위험 점수, 판단 근거 포함) — 디버그/UI용."""
     if bundle is None:
-        bundle = get_default_model(model_path)
+        bundle = get_default_model(resolve_model_path(model_path, model_kind))
     return prediction.predict_urls(bundle, urls)

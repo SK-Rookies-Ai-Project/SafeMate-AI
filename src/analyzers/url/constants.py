@@ -7,6 +7,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MODELS_DIR = PROJECT_ROOT / "models"
+URL_REPUTATION_DB = MODELS_DIR / "url_reputation.sqlite3"
 
 DATA_DIR = PROJECT_ROOT / "data" / "raw"
 ALL_CSV = DATA_DIR / "All.csv"                      # ISCX-URL-2016 feature 데이터

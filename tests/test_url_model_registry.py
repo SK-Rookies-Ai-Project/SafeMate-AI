@@ -38,7 +38,9 @@ def dataset():
 # ---------------------------------------------------------------------------
 
 def test_registry_keys():
-    assert set(MODEL_FACTORIES) == {"randomforest", "xgboost", "logistic", "lstm"}
+    assert set(MODEL_FACTORIES) == {
+        "randomforest", "xgboost", "logistic", "lstm", "charlstm",
+    }
 
 
 def test_registry_has_param_distributions():
@@ -93,6 +95,47 @@ def test_train_model(dataset, model_type, params):
     assert proba is not None
     assert set(proba.columns) == {"benign", "malware"}
     np.testing.assert_allclose(proba.iloc[0].sum(), 1.0, atol=1e-6)
+
+
+def test_charlstm_char_bundle(tmp_path):
+    """CharTokenizer + charlstm 학습→추론→저장/로딩 왕복."""
+    from src.analyzers.url.features import CharTokenizer, canonicalize_url_for_tfidf
+
+    n = 30
+    benign = [f"https://site{i}.example.com/page{i}" for i in range(n)]
+    risky = [
+        f"http://198.51.100.{i}/login.verify.update/x{i}.exe?id={i}"
+        for i in range(n)
+    ]
+    urls, labels = benign + risky, ["benign"] * n + ["malware"] * n
+
+    tokenizer = CharTokenizer(max_len=64)
+    x = tokenizer.transform([canonicalize_url_for_tfidf(u) for u in urls])
+    assert x.shape == (2 * n, 64) and x.dtype == np.int32
+    assert x.max() < tokenizer.vocab_size
+
+    from src.analyzers.url.schemas import DataSet
+
+    bundle = training.train_model(
+        DataSet(x, labels, name="char-synthetic"),
+        model_type="charlstm",
+        kind="char",
+        vectorizer=tokenizer,
+        epochs=2,
+        hidden_size=16,
+        vocab_size=tokenizer.vocab_size,
+    )
+    assert bundle.kind == "char"
+
+    test_urls = ["https://newsite.example.com/home", ""]
+    labels_pred = bundle.predict_labels(test_urls)
+    assert labels_pred.shape == (2,)
+
+    path = bundle.save(tmp_path / "charlstm.joblib")
+    loaded = ModelBundle.load(path)
+    np.testing.assert_array_equal(
+        loaded.predict_labels(test_urls), bundle.predict_labels(test_urls)
+    )
 
 
 def test_bundle_save_load_roundtrip(dataset, tmp_path):
