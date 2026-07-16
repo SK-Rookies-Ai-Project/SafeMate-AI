@@ -362,6 +362,7 @@ def main():
     # 3) representation별 전처리 + 모델 학습
     bundles = {}
     for representation in args.representations:
+        rep_y_train = y_train
         if representation == "feature":
             x_train = extract_features_parallel(urls_train, workers=args.workers)
             x_test = extract_features_parallel(urls_test, workers=args.workers)
@@ -373,11 +374,24 @@ def main():
                 args,
             )
         else:
+            # tfidf 행렬은 행당 ~100 비영원소라 전체 벡터화 후 fit 표본을
+            # 복사하면 같은 데이터가 3벌(전체/부분/DMatrix) 생겨 스왑까지
+            # 간다. 표본 상한을 벡터화 전에 적용해 전체 행렬 자체를 없앤다.
+            tfidf_urls_train = urls_train
+            if args.max_fit_rows and len(urls_train) > args.max_fit_rows:
+                idx = np.random.default_rng(args.random_state).choice(
+                    len(urls_train), size=args.max_fit_rows, replace=False
+                )
+                tfidf_urls_train = [urls_train[i] for i in idx]
+                rep_y_train = y_train[idx]
+                log.info("tfidf 표본 상한 %s행: 벡터화 전 적용",
+                         f"{args.max_fit_rows:,}")
             x_train, x_test, vectorizer = build_tfidf_matrices(
-                urls_train,
+                tfidf_urls_train,
                 urls_test,
                 args,
             )
+            del tfidf_urls_train
 
         for model_type in args.models:
             # charlstm은 문자 입력 전용, 나머지 모델은 수치 입력 전용
@@ -387,7 +401,7 @@ def main():
             bundles[key] = train_one(
                 model_type,
                 x_train,
-                y_train,
+                rep_y_train,
                 x_test,
                 y_test,
                 encoder,

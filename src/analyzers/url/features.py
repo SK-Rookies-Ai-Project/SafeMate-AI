@@ -449,6 +449,7 @@ def build_tfidf_vectorizer(**overrides) -> TfidfVectorizer:
         min_df=2,
         max_features=100_000,
         lowercase=True,
+        dtype=np.float32,  # float64는 수백만 행에서 행렬 크기 2배
     )
     params.update(overrides)
     return TfidfVectorizer(**params)
