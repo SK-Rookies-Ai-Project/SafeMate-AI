@@ -1,6 +1,9 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from src.ui.visualizations import (
+    _configure_korean_font,
     create_message_feature_chart,
     create_message_probability_chart,
     create_url_contribution_chart,
@@ -11,6 +14,14 @@ from matplotlib.figure import Figure
 
 
 class VisualizationTest(unittest.TestCase):
+    def test_prefers_installed_malgun_gothic_font(self) -> None:
+        installed_fonts = [SimpleNamespace(name="Malgun Gothic")]
+        with patch(
+            "src.ui.visualizations.font_manager.fontManager.ttflist",
+            installed_fonts,
+        ):
+            self.assertEqual(_configure_korean_font(), "Malgun Gothic")
+
     def test_creates_message_probability_chart(self) -> None:
         figure = create_message_probability_chart(
             {"phishing_probability": 0.84}
