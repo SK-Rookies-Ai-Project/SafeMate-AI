@@ -36,11 +36,11 @@ from scipy import sparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 from src.analyzers.url import prediction, training
 from src.analyzers.url.constants import MODELS_DIR, URL_BINARY_CSV
+from src.analyzers.url.datasets import dedup_group_split
 from src.analyzers.url.features import build_tfidf_vectorizer, clean_url
 from src.analyzers.url.model_registry import MODEL_FACTORIES, create_model
 from src.analyzers.url.schemas import DataSet, ModelBundle
@@ -225,6 +225,14 @@ def main():
     parser.add_argument("--nrows", type=int, default=None,
                         help="전체 대신 랜덤 표본 n행만 사용 (시험용)")
     parser.add_argument("--test-size", type=float, default=0.05)
+    parser.add_argument("--split", default="group",
+                        choices=["group", "random"],
+                        help="group: 등록 도메인(eTLD+1) 단위 분리로 "
+                             "train/test 도메인 누수 차단 (기본), "
+                             "random: 기존 URL 단위 랜덤 분리")
+    parser.add_argument("--dedup", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="canonical 중복·라벨충돌 행 제거 (기본: 켜짐)")
     parser.add_argument("--tune", action=argparse.BooleanOptionalAction,
                         default=True)
     parser.add_argument("--tune-lstm", action="store_true",
@@ -270,17 +278,18 @@ def main():
              f"{len(df):,}", dict(pd.Series(labels).value_counts()))
     del df
 
-    # 2) 라벨 인코딩 + URL 단위 split
+    # 2) 라벨 인코딩 + dedup + split (기본: 등록 도메인 group split)
     #    (vectorizer를 train으로만 fit해 test 누수를 막기 위해 split을 먼저)
     encoder = LabelEncoder()
     y = encoder.fit_transform(labels)
-    urls_train, urls_test, y_train, y_test = train_test_split(
-        urls, y, test_size=args.test_size,
-        random_state=args.random_state, stratify=y,
+    urls_train, urls_test, y_train, y_test = dedup_group_split(
+        urls, y, test_size=args.test_size, random_state=args.random_state,
+        dedup=args.dedup, split=args.split,
     )
     del urls, labels
-    log.info("train %s / test %s",
-             f"{len(urls_train):,}", f"{len(urls_test):,}")
+    log.info("train %s / test %s (split=%s, dedup=%s)",
+             f"{len(urls_train):,}", f"{len(urls_test):,}",
+             args.split, args.dedup)
 
     # 3) TF-IDF 데이터셋 생성
     vectorizer = fit_vectorizer(urls_train, args)
