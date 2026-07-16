@@ -1,7 +1,7 @@
 """저장된 URL 모델의 가중 확률 앙상블을 같은 holdout에서 평가한다.
 
-기본값은 train_url_model.py의 600만 행 표본, 5% holdout, random_state=42와
-같아 url_char_charlstm.joblib과 url_feature_xgboost.joblib을 바로 비교한다.
+기본값은 train_url_model.py의 전체 데이터, dedup + 도메인 group split 5%,
+random_state=42와 같아 최종 학습이 만든 모델들과 동일한 test 행에서 비교한다.
 """
 
 import argparse
@@ -13,11 +13,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.analyzers.url.constants import MODELS_DIR, URL_BINARY_CSV
+from src.analyzers.url.datasets import dedup_group_split
 from src.analyzers.url.schemas import ModelBundle
 
 
@@ -59,8 +59,14 @@ def main():
                         type=Path)
     parser.add_argument("--feature-model", default=MODELS_DIR / "url_feature_xgboost.joblib",
                         type=Path)
-    parser.add_argument("--nrows", type=int, default=6_000_000)
+    parser.add_argument("--nrows", type=int, default=None,
+                        help="전체 대신 랜덤 표본 n행만 사용 (기본: 전체)")
     parser.add_argument("--test-size", type=float, default=0.05)
+    parser.add_argument("--split", default="group",
+                        choices=["group", "random"],
+                        help="학습 스크립트와 동일해야 같은 holdout이 된다")
+    parser.add_argument("--dedup", action=argparse.BooleanOptionalAction,
+                        default=True)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--weight-step", type=float, default=0.05,
                         help="char 모델 가중치 탐색 간격")
@@ -81,12 +87,13 @@ def main():
         df = df.sample(n=args.nrows, random_state=args.random_state)
     urls = df.iloc[:, 0].astype(str).tolist()
     labels = df.iloc[:, 1].astype(str).tolist()
-    _, urls_test, _, y_test = train_test_split(
+    _, urls_test, _, y_test = dedup_group_split(
         urls,
         labels,
         test_size=args.test_size,
         random_state=args.random_state,
-        stratify=labels,
+        dedup=args.dedup,
+        split=args.split,
     )
     del df, urls, labels
 
