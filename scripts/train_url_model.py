@@ -59,7 +59,7 @@ CHAR_ONLY_MODELS = {"charlstm"}
 MAX_FIT_ROWS = {
     "randomforest": 2_000_000,
     "lstm": 2_000_000,
-    "charlstm": 2_000_000,
+    "charlstm": 4_000_000,
     "logistic": 4_000_000,  # lbfgs는 이 이상에서 시간 대비 이득이 없음
 }
 
