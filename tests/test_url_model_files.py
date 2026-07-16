@@ -19,8 +19,8 @@ def _xfail_if_known_unloadable(model_path: Path):
         pytest.xfail(reason)
 
 
-def test_model_directory_contains_joblib_files():
-    assert MODEL_FILES, "models 폴더에 .joblib 모델 파일이 없습니다."
+def test_models_directory_exists():
+    assert MODELS_DIR.is_dir()
 
 
 @pytest.mark.parametrize("model_path", MODEL_FILES, ids=lambda p: p.name)

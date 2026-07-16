@@ -1,6 +1,7 @@
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import joblib
 import pandas as pd
@@ -10,8 +11,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
 
-MODEL_PATH = "sms_spam_model.pkl"
-META_PATH = "model_meta.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_PATH = PROJECT_ROOT / "data" / "raw" / "20260714_korean_spam_ham_binary_dataset_6000row.csv"
+MODELS_DIR = PROJECT_ROOT / "models"
+MODEL_PATH = MODELS_DIR / "sms_spam_model.pkl"
+META_PATH = MODELS_DIR / "sms_model_meta.json"
 
 # 모델 3종 threshold 스윕 + PR curve 실험에서
 # Naive Bayes 기준 F1이 최적이었던 지점 (모든 결과 중 최선으로 판단)
@@ -21,7 +25,7 @@ BEST_THRESHOLD = 0.9621
 # ==========================
 # 1. 데이터 로드 (sms_model.py와 동일한 학습 데이터)
 # ==========================
-df = pd.read_csv('korean_spam_ham_binary_dataset_6000row.csv')
+df = pd.read_csv(DATA_PATH)
 df = df[df['channel'] == 'SMS']
 
 X = df["text"].fillna("")
@@ -72,6 +76,7 @@ print(confusion_matrix(y_test, y_pred))
 # 4. 전체 데이터로 재학습 후 저장
 #    (배포용 모델은 holdout 없이 가진 데이터 전부를 사용)
 # ==========================
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 pipeline.fit(X, y)
 
 joblib.dump(pipeline, MODEL_PATH)
