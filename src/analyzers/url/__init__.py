@@ -20,7 +20,7 @@ from src.analyzers.url.features import (
     normalize_url,
     reduce_tfidf_dimensions,
 )
-from src.analyzers.url.prediction import analyze_urls, predict_urls
+from src.analyzers.url.prediction import analyze_url, analyze_urls, predict_urls
 from src.analyzers.url.schemas import DataSet, ModelBundle
 from src.analyzers.url.training import (
     MODEL_FACTORIES,
@@ -50,6 +50,7 @@ __all__ = [
     "extract_url_features",
     "normalize_url",
     "reduce_tfidf_dimensions",
+    "analyze_url",
     "analyze_urls",
     "predict_urls",
     "DataSet",
