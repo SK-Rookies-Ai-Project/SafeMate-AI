@@ -71,6 +71,34 @@ def test_analyze_url_suspicious_contract(url_bundle):
     assert result["signals"]
 
 
+def test_analyze_url_tfidf_contract_reports_tfidf_features():
+    benign = [f"https://safe{i}.example.com/home" for i in range(12)]
+    risky = [f"http://evil{i}.example.ru/login/verify?id={i}" for i in range(12)]
+    labels = ["benign"] * len(benign) + ["malicious"] * len(risky)
+    dataset, vectorizer = training.make_tfidf_dataset(
+        benign + risky,
+        labels=labels,
+        min_df=1,
+        ngram_range=(3, 4),
+    )
+    bundle = training.train_model(
+        dataset,
+        model_type="logistic",
+        kind="tfidf",
+        vectorizer=vectorizer,
+    )
+
+    result = url_analyzer.analyze_url(
+        "http://evil99.example.ru/login/verify?id=99",
+        bundle=bundle,
+    )
+
+    _assert_contract(result)
+    assert result["features"]
+    assert all(row["name"].startswith("TF-IDF ngram: ") for row in result["features"])
+    assert all(row["raw_value"] >= 0.0 for row in result["features"])
+
+
 def test_analyze_url_invalid_contract_without_loading_model():
     result = url_analyzer.analyze_url("not a url")
 

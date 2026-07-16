@@ -94,7 +94,7 @@ def _normalize_feature_value(raw_value: Any, scale: float) -> float:
     return round(min(value / scale, 1.0), 4)
 
 
-def explain_features(url: str) -> list[dict]:
+def explain_lexical_features(url: str) -> list[dict]:
     """Features actually extracted for the URL, formatted for the UI contract."""
     raw_features = extract_url_features(url)
     return [
@@ -108,6 +108,76 @@ def explain_features(url: str) -> list[dict]:
         }
         for display_name, feature_name, scale in _DISPLAY_FEATURES
     ]
+
+
+def _model_step(model: Any, name: str) -> Any:
+    if hasattr(model, "named_steps"):
+        return model.named_steps.get(name)
+    return None
+
+
+def _risk_contributions_for_tfidf(bundle: ModelBundle, x_row) -> Optional[dict[int, float]]:
+    """Return per-column risk contributions when the model exposes them safely."""
+    logistic = _model_step(bundle.model, "logisticregression")
+    scaler = _model_step(bundle.model, "standardscaler")
+    if logistic is None or scaler is None:
+        return None
+    if not hasattr(logistic, "coef_") or len(getattr(logistic, "classes_", [])) != 2:
+        return None
+
+    classes = list(logistic.classes_)
+    decoded = (
+        [str(v) for v in bundle.label_encoder.inverse_transform(classes)]
+        if bundle.label_encoder is not None
+        else [str(v) for v in classes]
+    )
+    benign_labels = {str(v).lower() for v in BENIGN_LABELS}
+    positive_label = decoded[1].strip().lower()
+    positive_is_risk = positive_label not in benign_labels
+
+    scaled = scaler.transform(x_row)
+    coef = logistic.coef_[0]
+    row = scaled.multiply(coef).tocoo()
+    sign = 1.0 if positive_is_risk else -1.0
+    return {int(col): float(value * sign) for col, value in zip(row.col, row.data)}
+
+
+def explain_tfidf_features(bundle: ModelBundle, url: str, limit: int = 10) -> list[dict]:
+    """Return TF-IDF n-gram features actually passed to the URL model."""
+    if bundle.vectorizer is None:
+        return []
+
+    x_row = bundle.transform([url])
+    if x_row.shape[0] == 0 or x_row.nnz == 0:
+        return []
+
+    feature_names = bundle.vectorizer.get_feature_names_out()
+    contributions = _risk_contributions_for_tfidf(bundle, x_row)
+    coo = x_row.tocoo()
+    rows = []
+    for col, value in zip(coo.col, coo.data):
+        contribution = None
+        if contributions is not None:
+            contribution = round(contributions.get(int(col), 0.0), 6)
+        rows.append({
+            "name": f"TF-IDF ngram: {feature_names[int(col)]}",
+            "raw_value": float(value),
+            "normalized_value": round(min(max(float(value), 0.0), 1.0), 4),
+            "contribution": contribution,
+        })
+
+    if contributions is not None:
+        rows.sort(key=lambda row: abs(row["contribution"] or 0.0), reverse=True)
+    else:
+        rows.sort(key=lambda row: row["raw_value"], reverse=True)
+    return rows[:limit]
+
+
+def explain_features(bundle: ModelBundle, url: str) -> list[dict]:
+    """Return the feature rows that match the active model representation."""
+    if bundle.kind == "tfidf":
+        return explain_tfidf_features(bundle, url)
+    return explain_lexical_features(url)
 
 
 def build_signals(url: str) -> list[str]:
@@ -215,7 +285,7 @@ def analyze_url(bundle: ModelBundle, url: str) -> dict:
             "label": label,
             "risk_score": risk_score,
             "signals": signals,
-            "features": explain_features(url),
+            "features": explain_features(bundle, url),
             "model_version": MODEL_VERSION,
             "error": None,
         }
