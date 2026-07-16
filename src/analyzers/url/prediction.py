@@ -1,26 +1,151 @@
-"""학습된 ModelBundle로 URL 위험도를 판정하는 예측 모듈."""
+"""Prediction helpers for trained URL ModelBundle objects."""
 
-from typing import Sequence
+import math
+import re
+from typing import Any, Optional, Sequence
+from urllib.parse import urlparse
 
 from src.analyzers.url.constants import (
     BENIGN_LABELS,
+    EXECUTABLE_EXTENSIONS,
     RISK_VERDICT,
     SAFE_VERDICT,
+    SENSITIVE_WORDS,
 )
+from src.analyzers.url.features import extract_url_features, normalize_url
+from src.analyzers.url.reputation import lookup_url_reputation
+from src.analyzers.url.schemas import ModelBundle
+
+MODEL_VERSION = "url-v1"
+
+_DISPLAY_FEATURES = (
+    ("URL 길이", "urlLen", 120.0),
+    ("도메인 길이", "domainlength", 60.0),
+    ("경로 길이", "pathLength", 90.0),
+    ("쿼리 길이", "Querylength", 120.0),
+    ("특수문자 개수", "SymbolCount_URL", 24.0),
+    ("숫자 비율", "NumberRate_URL", 1.0),
+    ("점 개수", "NumberofDotsinURL", 8.0),
+    ("민감 키워드 개수", "URL_sensitiveWord", 4.0),
+    ("쿼리 변수 개수", "URLQueries_variable", 8.0),
+    ("URL 엔트로피", "Entropy_URL", 1.0),
+    ("실행 파일 확장자", "executable", 1.0),
+)
+_SUPPORTED_SCHEMES = frozenset({"http", "https"})
+_WHITESPACE_RE = re.compile(r"\s")
+
+
+def _empty_contract(url: Any, error: Optional[str]) -> dict:
+    return {
+        "status": "error" if error else "success",
+        "url": url if isinstance(url, str) else "",
+        "label": "unknown",
+        "risk_score": None,
+        "signals": [],
+        "features": [],
+        "model_version": MODEL_VERSION,
+        "error": error,
+    }
+
+
+def validate_url(url: Any) -> Optional[str]:
+    """Return a safe user-facing error string, or None when usable."""
+    if not isinstance(url, str):
+        return "url must be a string"
+    raw = url.strip()
+    if not raw:
+        return "url is empty"
+    if _WHITESPACE_RE.search(raw):
+        return "url contains whitespace"
+    try:
+        parsed = urlparse(normalize_url(raw))
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname
+    except Exception:
+        return "url is invalid"
+    if scheme not in _SUPPORTED_SCHEMES:
+        return "url scheme is not supported"
+    if not host or "." not in host:
+        return "url host is invalid"
+    return None
+
+
+def _json_number(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return float(value)
+    return value
+
+
+def _normalize_feature_value(raw_value: Any, scale: float) -> float:
+    if raw_value is None:
+        return 0.0
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(value) or math.isinf(value) or value <= 0:
+        return 0.0
+    return round(min(value / scale, 1.0), 4)
+
+
+def explain_features(url: str) -> list[dict]:
+    """Features actually extracted for the URL, formatted for the UI contract."""
+    raw_features = extract_url_features(url)
+    return [
+        {
+            "name": display_name,
+            "raw_value": _json_number(raw_features.get(feature_name)),
+            "normalized_value": _normalize_feature_value(
+                raw_features.get(feature_name), scale
+            ),
+            "contribution": None,
+        }
+        for display_name, feature_name, scale in _DISPLAY_FEATURES
+    ]
+
+
+def build_signals(url: str) -> list[str]:
+    """Human-readable string-feature signals. No URL requests are performed."""
+    raw = url.strip()
+    parsed = urlparse(normalize_url(raw))
+    host = parsed.hostname or ""
+    path = parsed.path or ""
+    query = parsed.query or ""
+    lower = raw.lower()
+    signals = []
+
+    if len(raw) >= 80:
+        signals.append("URL 길이가 김")
+    if any(word in lower for word in SENSITIVE_WORDS):
+        signals.append("로그인 또는 계정 관련 키워드 포함")
+    if query:
+        signals.append("쿼리 문자열 포함")
+    if sum(not ch.isalnum() for ch in raw) >= 10:
+        signals.append("특수문자 사용 비율이 높음")
+    if sum(ch.isdigit() for ch in host) >= 4:
+        signals.append("도메인에 숫자가 많이 포함됨")
+    if host.replace(".", "").isdigit():
+        signals.append("IP 주소 형태의 도메인 사용")
+    if path.rsplit(".", 1)[-1].lower() in EXECUTABLE_EXTENSIONS:
+        signals.append("실행 파일 확장자 포함")
+    if parsed.scheme.lower() == "http":
+        signals.append("암호화되지 않은 HTTP 스킴 사용")
+    return signals
 
 
 def label_to_verdict(label) -> str:
-    """원본 라벨 → '위험'/'안전' 판정 (BENIGN_LABELS 외에는 전부 위험)."""
+    """Map a source label to the legacy Korean verdict."""
     return SAFE_VERDICT if str(label) in BENIGN_LABELS else RISK_VERDICT
 
 
 def predict_urls(bundle: ModelBundle, urls: Sequence[str]) -> list:
-    """상세 예측 결과 리스트 — 디버그/UI용.
-
-    각 원소: {url, label(원본 라벨), verdict(위험/안전),
-              risk_score(위험 클래스 확률 합, 모델 미지원 시 None),
-              proba(클래스별 확률 dict, 모델 미지원 시 None)}
-    """
+    """Return legacy detailed prediction rows for multiple URLs."""
     urls = list(urls)
     labels = bundle.predict_labels(urls)
     proba = bundle.predict_proba(urls)
@@ -69,12 +194,27 @@ def analyze_url(bundle: ModelBundle, url: str) -> dict:
         risk_score = prediction["risk_score"]
         if risk_score is not None:
             risk_score = round(max(0.0, min(float(risk_score), 1.0)), 4)
+        label = label_to_contract_label(prediction["label"], risk_score)
+        signals = build_signals(url)
+        reputation = lookup_url_reputation(url)
+        if reputation is not None:
+            risk_score = round(
+                max(0.0, min(float(reputation["risk_score"]), 1.0)),
+                4,
+            )
+            label = label_to_contract_label(reputation["label"], risk_score)
+            signals.append(
+                "로컬 URL 데이터셋 exact match: "
+                f"{reputation['label']} "
+                f"({reputation['benign_count']} 정상 / "
+                f"{reputation['risk_count']} 악성)"
+            )
         return {
             "status": "success",
             "url": url,
-            "label": label_to_contract_label(prediction["label"], risk_score),
+            "label": label,
             "risk_score": risk_score,
-            "signals": build_signals(url),
+            "signals": signals,
             "features": explain_features(url),
             "model_version": MODEL_VERSION,
             "error": None,
@@ -84,5 +224,5 @@ def analyze_url(bundle: ModelBundle, url: str) -> dict:
 
 
 def analyze_urls(bundle: ModelBundle, urls: Sequence[str]) -> dict:
-    """URL 배열 → {링크: '위험'/'안전'} (프로그램 최종 출력 형식)."""
+    """Return the legacy URL-to-verdict mapping."""
     return {r["url"]: r["verdict"] for r in predict_urls(bundle, urls)}

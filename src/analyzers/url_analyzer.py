@@ -11,6 +11,7 @@ UI)가 쓰는 진입 API만 노출한다.
     # → {"http://...": "위험", "https://...": "안전", ...}
 """
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -51,6 +52,18 @@ def load_model(path: Union[str, Path] = DEFAULT_MODEL_PATH) -> ModelBundle:
     return ModelBundle.load(path)
 
 
+@lru_cache(maxsize=4)
+def _load_model_cached(path: str) -> ModelBundle:
+    return load_model(path)
+
+
+def get_default_model(
+    model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
+) -> ModelBundle:
+    """Return the cached default URL model bundle."""
+    return _load_model_cached(str(Path(model_path)))
+
+
 def train_default_model(
     model_type: str = "randomforest",
     tune: bool = False,
@@ -62,13 +75,42 @@ def train_default_model(
     bundle = training.train_model(dataset, model_type=model_type, tune=tune)
     if save_path:
         bundle.save(save_path)
+        _load_model_cached.cache_clear()
+    return bundle
+
+
+def train_default_tfidf_model(
+    model_type: str = "logistic",
+    tune: bool = False,
+    save_path: Optional[Union[str, Path]] = DEFAULT_TFIDF_MODEL_PATH,
+    nrows: Optional[int] = None,
+    **vectorizer_params,
+) -> ModelBundle:
+    """Train a default TF-IDF URL model from raw URLs and optionally save it."""
+    urls, labels = training.load_url_csv(nrows=nrows)
+    dataset, vectorizer = training.make_tfidf_dataset(
+        urls,
+        labels=labels,
+        **vectorizer_params,
+    )
+    bundle = training.train_model(
+        dataset,
+        model_type=model_type,
+        kind="tfidf",
+        vectorizer=vectorizer,
+        tune=tune,
+    )
+    if save_path:
+        bundle.save(save_path)
+        _load_model_cached.cache_clear()
     return bundle
 
 
 def analyze_url(
     url: str,
     bundle: Optional[ModelBundle] = None,
-    model_path: Union[str, Path] = DEFAULT_MODEL_PATH,
+    model_path: Optional[Union[str, Path]] = None,
+    model_kind: str = "feature",
 ) -> dict:
     """Analyze one URL and return the SafeMate URL model contract."""
     validation_error = prediction.validate_url(url)
@@ -85,7 +127,7 @@ def analyze_url(
         }
     try:
         if bundle is None:
-            bundle = get_default_model(model_path)
+            bundle = get_default_model(resolve_model_path(model_path, model_kind))
         return prediction.analyze_url(bundle, url)
     except FileNotFoundError:
         return {
@@ -119,7 +161,7 @@ def analyze_urls(
 ) -> dict:
     """URL 배열 → {링크: '위험'/'안전'} 딕셔너리 (프로그램 최종 출력 형식)."""
     if bundle is None:
-        bundle = get_default_model(model_path)
+        bundle = get_default_model(resolve_model_path(model_path, model_kind))
     return prediction.analyze_urls(bundle, urls)
 
 
@@ -131,5 +173,5 @@ def analyze_urls_detail(
 ) -> list:
     """상세 결과(라벨, 위험 점수, 판단 근거 포함) — 디버그/UI용."""
     if bundle is None:
-        bundle = get_default_model(model_path)
+        bundle = get_default_model(resolve_model_path(model_path, model_kind))
     return prediction.predict_urls(bundle, urls)
