@@ -1,31 +1,21 @@
-"""
-SMS 스팸 탐지 모델 학습 + .pkl 저장 스크립트
-
-sms_model.py에서 쓰던 것과 동일한 TF-IDF + LinearSVC 조합을 사용하되,
-챗봇에서 "몇 % 확률로 스팸입니다" 같은 확신도 응답을 만들 수 있도록
-CalibratedClassifierCV로 감싸서 predict_proba를 지원하게 했습니다.
-(성능/임계값 튜닝은 나중에 이어서 진행하시면 되고, 지금은 배포용
-파이프라인 형태만 잡는 스크립트입니다.)
-
-실행하면 같은 폴더에 다음 파일이 생성됩니다:
-  - sms_spam_model.pkl   : 학습된 파이프라인(TF-IDF + 분류기) 전체
-  - model_meta.json      : 라벨 의미, 학습 일시 등 메타 정보
-"""
 
 import json
 from datetime import datetime
 
 import joblib
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
-from sklearn.svm import LinearSVC
 
 MODEL_PATH = "sms_spam_model.pkl"
 META_PATH = "model_meta.json"
+
+# 모델 3종 threshold 스윕 + PR curve 실험에서
+# Naive Bayes 기준 F1이 최적이었던 지점 (모든 결과 중 최선으로 판단)
+BEST_THRESHOLD = 0.9621
 
 
 # ==========================
@@ -42,13 +32,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 
-# ==========================
-# 2. 파이프라인 구성
-# ==========================
-# LinearSVC는 기본적으로 확률(predict_proba)을 지원하지 않아서
-# CalibratedClassifierCV로 감싸서 확률 스코어를 뽑을 수 있게 함
-base_clf = LinearSVC(random_state=42)
-calibrated_clf = CalibratedClassifierCV(base_clf, method="sigmoid", cv=5)
+
+clf = MultinomialNB()
 
 pipeline = Pipeline([
     (
@@ -63,19 +48,20 @@ pipeline = Pipeline([
     ),
     (
         "clf",
-        calibrated_clf
+        clf
     )
 ])
 
 
 # ==========================
-# 3. 학습 + 간단 검증
+# 3. 학습 + 간단 검증 (threshold=0.9621 적용)
 # ==========================
 pipeline.fit(X_train, y_train)
 
-y_pred = pipeline.predict(X_test)
+y_proba = pipeline.predict_proba(X_test)[:, 1]
+y_pred = (y_proba > BEST_THRESHOLD).astype(int)
 print("=" * 60)
-print("Accuracy (holdout) :", accuracy_score(y_test, y_pred))
+print(f"Accuracy (holdout, threshold={BEST_THRESHOLD}) :", accuracy_score(y_test, y_pred))
 print("=" * 60)
 print(classification_report(y_test, y_pred))
 print("Confusion Matrix")
@@ -93,11 +79,11 @@ print(f"\n모델 저장 완료: {MODEL_PATH}")
 
 meta = {
     "label_meaning": {"0": "정상(ham)", "1": "스팸(spam)"},
-    "model": "TF-IDF(char_wb, 2-6gram) + CalibratedClassifierCV(LinearSVC)",
+    "model": "TF-IDF(char_wb, 2-6gram) + MultinomialNB",
     "trained_at": datetime.now().isoformat(timespec="seconds"),
     "train_rows": int(len(X)),
-    "default_threshold": 0.5,
-    "note": "threshold는 성능 튜닝 이후 조정 예정. 현재는 predict_proba 기본값(0.5) 사용.",
+    "default_threshold": BEST_THRESHOLD,
+    "note": "threshold=0.9621은 spam_test_master 기반 PR curve 실험에서 F1 최적으로 확인된 값.",
 }
 with open(META_PATH, "w", encoding="utf-8") as f:
     json.dump(meta, f, ensure_ascii=False, indent=2)
