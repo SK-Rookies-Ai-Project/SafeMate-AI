@@ -24,11 +24,15 @@ class VisualizationTest(unittest.TestCase):
 
     def test_creates_message_probability_chart(self) -> None:
         figure = create_message_probability_chart(
-            {"phishing_probability": 0.84}
+            {"phishing_probability": 0.82}
         )
 
         self.assertIsInstance(figure, Figure)
-        self.assertEqual(len(figure.axes[0].patches), 2)
+        self.assertEqual(len(figure.axes[0].patches), 1)
+        self.assertEqual(
+            figure.axes[0].get_yticklabels()[0].get_text(),
+            "스팸·사기 통합 점수",
+        )
 
     def test_omits_message_probability_chart_without_valid_score(self) -> None:
         self.assertIsNone(

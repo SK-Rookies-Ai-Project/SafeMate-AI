@@ -139,11 +139,21 @@ def _render_message_analysis(analysis: dict) -> None:
     if not analysis:
         st.info("메시지 분석 결과가 없습니다.")
         return
-    st.text(f"분류: {analysis.get('label', 'unknown')}")
+    label = analysis.get("label", "unknown")
+    display_label = {
+        "normal": "정상",
+        "phishing": "스팸·사기 의심",
+        "unknown": "판단 불가",
+    }.get(label, str(label))
+    st.text(f"분류: {display_label}")
     probability = analysis.get("phishing_probability")
     st.text(
-        "피싱 확률: "
+        "스팸·사기 통합 점수: "
         + ("분석 불가" if probability is None else f"{probability:.0%}")
+    )
+    st.caption(
+        "광고성 스팸, 사기, 피싱을 포함한 통합 분류 결과이며 "
+        "피싱만의 확률을 의미하지 않습니다."
     )
     probability_chart = create_message_probability_chart(analysis)
     if probability_chart is not None:

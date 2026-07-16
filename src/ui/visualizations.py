@@ -64,21 +64,20 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 
 
 def create_message_probability_chart(analysis: dict) -> Figure | None:
-    """Visualize the normal/phishing probability from the message contract."""
+    """Visualize the model's combined spam and scam score."""
     probability = _unit_interval(analysis.get("phishing_probability"))
     if probability is None:
         return None
 
-    values = [1.0 - probability, probability]
-    figure, axis = _new_chart(height=2.6)
+    figure, axis = _new_chart(height=1.75)
     bars = axis.barh(
-        ["정상", "피싱"],
-        values,
-        color=[SAFE, DANGER],
-        height=0.55,
+        ["스팸·사기 통합 점수"],
+        [probability],
+        color=DANGER,
+        height=0.3,
     )
-    _format_percentage_axis(axis, "메시지 분류 확률")
-    _label_bars(axis, bars, values)
+    _format_percentage_axis(axis, "메시지 분류 결과")
+    _label_bars(axis, bars, [probability])
     return _finish(figure)
 
 
