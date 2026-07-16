@@ -1,10 +1,3 @@
-"""
-analyze_message.py 에서 `from sms_model import analyze_sms` 로 불러쓰는
-SMS 스캠(스팸/피싱) 탐지 프로덕션 모듈.
-
-학습/실험 코드는 여기 없습니다 (train_experiments.py, train_and_export_model.py 참고).
-이 파일은 오직 sms_spam_model.pkl을 로드해서 문자 한 건을 판독하는 역할만 합니다.
-"""
 
 import os
 import re
@@ -13,6 +6,10 @@ import joblib
 
 MODEL_VERSION = "sms-v1"
 _MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sms_spam_model.pkl")
+
+# train_and_export_model.py의 PR curve 실험에서 Naive Bayes 기준
+# F1 최적으로 확인된 threshold (model_meta.json의 default_threshold와 동일하게 유지)
+DEFAULT_THRESHOLD = 0.9621
 
 _model = None  # 최초 호출 시 한 번만 로드
 
@@ -25,7 +22,7 @@ def _get_model():
 
 
 # --------------------------------------------------------------------
-# 규칙 기반 보조 시그널
+# 규칙 기반 보조 시그널 (임시로 클로드가 생성)
 # ML 확률 하나만 보여주면 챗봇이 "왜 스팸이라고 판단했는지" 설명하기
 # 어려워서, 자주 나타나는 패턴을 별도로 탐지해 signals에 같이 담는다.
 # ML 판정과는 독립적이며, 참고용 근거로만 사용.
@@ -45,10 +42,7 @@ def _detect_signals(text: str) -> list[str]:
 
 
 def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
-    """
-    이 문장에서 스팸 판정에 가장 크게 기여한 n-gram을 근사적으로 추출.
-    (TF-IDF 값 * 분류기 계수로 기여도를 근사, 계수를 못 구하면 빈 리스트 반환)
-    """
+
     try:
         tfidf = pipeline.named_steps["tfidf"]
         clf = pipeline.named_steps["clf"]
@@ -68,6 +62,12 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
                 coefs = sum(coef_list) / len(coef_list)
         elif hasattr(clf, "coef_"):
             coefs = clf.coef_[0]
+        elif hasattr(clf, "feature_log_prob_"):
+            # MultinomialNB: coef_가 없어서 log-odds(스팸 클래스 - 정상 클래스)로 근사
+            classes = list(clf.classes_)
+            spam_idx = classes.index(1) if 1 in classes else 1
+            ham_idx = classes.index(0) if 0 in classes else 0
+            coefs = clf.feature_log_prob_[spam_idx] - clf.feature_log_prob_[ham_idx]
 
         if coefs is None:
             return []
@@ -89,21 +89,6 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
 
 
 def analyze_sms(text: str) -> dict:
-    """
-    SMS 문자 한 건을 분석해서 스팸/피싱 여부를 판정한다.
-    analyze_message.py가 기대하는 응답 스키마를 그대로 따른다.
-
-    Returns:
-        {
-            "status": "success" | "error",
-            "label": "spam" | "ham" | "unknown",
-            "phishing_probability": float | None,
-            "signals": list[str],
-            "top_features": list[dict],
-            "model_version": str,
-            "error": str  # status == "error" 일 때만 포함
-        }
-    """
     if not text or not text.strip():
         return {
             "status": "error",
@@ -118,7 +103,7 @@ def analyze_sms(text: str) -> dict:
     try:
         model = _get_model()
         proba = float(model.predict_proba([text])[0][1])  # 스팸(1)일 확률
-        label = "spam" if proba > 0.5 else "ham"
+        label = "spam" if proba > DEFAULT_THRESHOLD else "ham"
 
         return {
             "status": "success",
@@ -153,7 +138,7 @@ def analyze_sms(text: str) -> dict:
 
 if __name__ == "__main__":
     samples = [
-        "엄마 나 폰이 망가져서 컴퓨터로 문자 보내고 있어",
+        "엄마 나 폰이 고장나서 컴퓨터로 문자 보내고 있어",
         "[국외발신] 계정이 해외 IP에서 로그인되었습니다. 지금 확인하세요 http://bit.ly/abc123",
     ]
     for s in samples:
