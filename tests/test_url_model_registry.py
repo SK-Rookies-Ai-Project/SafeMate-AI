@@ -60,6 +60,9 @@ def test_create_model_lstm_returns_wrapper():
     assert model.hidden_size == 8
 
 
+def test_randomforest_default_has_leaf_limit():
+    model = create_model("randomforest")
+    assert model.get_params()["min_samples_leaf"] == 20
 # ---------------------------------------------------------------------------
 # LSTMClassifier sklearn 호환성 (RandomizedSearchCV가 요구하는 것들)
 # ---------------------------------------------------------------------------

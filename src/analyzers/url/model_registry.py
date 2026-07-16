@@ -16,7 +16,8 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
  ---------------------------------------------------------------------------
 '''
 def _make_randomforest(random_state: int, **params : Any):
-    defaults = dict(n_estimators=300, n_jobs=-1)
+    # 리프 제한 없이는 2M행에서 트리가 완전히 자라 fit이 10분 이상 걸린다
+    defaults = dict(n_estimators=300, n_jobs=-1, min_samples_leaf=20)
     defaults.update(params)
     return RandomForestClassifier(random_state=random_state, **defaults)
 
@@ -298,7 +299,8 @@ DEFAULT_PARAM_DISTRIBUTIONS = {
         "n_estimators": [100, 200, 300, 500],
         "max_depth": [None, 10, 20, 40],
         "min_samples_split": [2, 5, 10],
-        "min_samples_leaf": [1, 2, 4],
+        # 1~4는 대형 데이터에서 트리가 완전히 자라 튜닝이 수십 분 걸린다
+        "min_samples_leaf": [10, 20, 50],
         "max_features": ["sqrt", "log2"],
     },
     "xgboost": {

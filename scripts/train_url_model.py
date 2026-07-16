@@ -58,7 +58,7 @@ CHAR_ONLY_MODELS = {"charlstm"}
 # 전체(16.5M행) 학습이 비현실적으로 느린 모델은 학습 표본을 상한으로 자른다
 MAX_FIT_ROWS = {
     "randomforest": 2_000_000,
-    "lstm": 2_000_000,
+    "lstm": 4_000_000,
     "charlstm": 4_000_000,
     "logistic": 4_000_000,  # lbfgs는 이 이상에서 시간 대비 이득이 없음
 }
@@ -190,7 +190,6 @@ def train_one(
     params = dict(MODEL_FIT_PARAMS.get(model_type, {}))
     if model_type == "charlstm" and vectorizer is not None:
         params["vocab_size"] = vectorizer.vocab_size
-
     model = create_model(model_type, random_state, **params)
     best_params = dict(params)
 
