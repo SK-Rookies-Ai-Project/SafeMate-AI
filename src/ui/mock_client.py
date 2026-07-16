@@ -11,6 +11,7 @@ from src.config import (
     MAX_URL_CANDIDATES,
     MAX_URLS_TO_ANALYZE,
 )
+from src.pipeline import calculate_overall_risk
 
 
 SOURCE_PRIORITY = {"text": 0, "href": 1, "image_src": 2}
@@ -68,16 +69,29 @@ class MockAnalysisClient:
             }
             for candidate in selected
         ]
+        message_analysis = {
+            "status": "success",
+            "label": "phishing" if has_risk else "normal",
+            "phishing_probability": 0.84 if has_risk else 0.12,
+            "signals": matched_terms or ["Mock 메시지 분석 결과"],
+            "top_features": [
+                {
+                    "name": term,
+                    "value": 1.0,
+                    "contribution": round(0.31 - index * 0.04, 2),
+                }
+                for index, term in enumerate(matched_terms[:5])
+            ],
+            "model_version": "mock-message-v1",
+            "error": None,
+        }
 
         return {
             "schema_version": "1.0",
             "request_id": payload["request_id"],
             "input_type": input_type,
             "status": "success",
-            "overall_risk": {
-                "level": "high" if has_risk else "low",
-                "score": 0.82 if has_risk else 0.18,
-            },
+            "overall_risk": calculate_overall_risk(message_analysis, url_analysis),
             "summary": (
                 "주의가 필요한 표현이나 URL이 확인되었습니다."
                 if has_risk
@@ -88,22 +102,7 @@ class MockAnalysisClient:
                 "메시지 또는 이메일 속 URL을 바로 열지 마세요.",
                 "발신 기관의 공식 채널에서 내용을 별도로 확인하세요.",
             ],
-            "message_analysis": {
-                "status": "success",
-                "label": "phishing" if has_risk else "normal",
-                "phishing_probability": 0.84 if has_risk else 0.12,
-                "signals": matched_terms or ["Mock 메시지 분석 결과"],
-                "top_features": [
-                    {
-                        "name": term,
-                        "value": 1.0,
-                        "contribution": round(0.31 - index * 0.04, 2),
-                    }
-                    for index, term in enumerate(matched_terms[:5])
-                ],
-                "model_version": "mock-message-v1",
-                "error": None,
-            },
+            "message_analysis": message_analysis,
             "url_analysis_summary": {
                 "candidate_count": len(unique_candidates),
                 "analyzed_count": len(selected),

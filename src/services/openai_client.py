@@ -9,6 +9,7 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.config import OPENAI_MAX_RETRIES, OPENAI_TIMEOUT_SECONDS
 from src.services.file_search import (
     FILE_SEARCH_INCLUDE,
     build_file_search_tool,
@@ -91,7 +92,11 @@ class OpenAISecurityChatClient:
         self.vector_store_id = (
             configured_store.strip() if configured_store and configured_store.strip() else None
         )
-        self.client = client or OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = client or OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            timeout=OPENAI_TIMEOUT_SECONDS,
+            max_retries=OPENAI_MAX_RETRIES,
+        )
 
     def ask(
         self,

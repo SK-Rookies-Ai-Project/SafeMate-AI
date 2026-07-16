@@ -1,7 +1,9 @@
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from src.config import OPENAI_MAX_RETRIES, OPENAI_TIMEOUT_SECONDS
 from src.services.openai_client import (
     OpenAISecurityChatClient,
     build_analysis_snapshot,
@@ -67,6 +69,17 @@ class AnalysisSnapshotTest(unittest.TestCase):
 
 
 class OpenAISecurityChatClientTest(unittest.TestCase):
+    @patch("src.services.openai_client.OpenAI")
+    def test_configures_timeout_and_retry_policy(self, openai_factory) -> None:
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            OpenAISecurityChatClient(model="gpt-5.6")
+
+        openai_factory.assert_called_once_with(
+            api_key="test-key",
+            timeout=OPENAI_TIMEOUT_SECONDS,
+            max_retries=OPENAI_MAX_RETRIES,
+        )
+
     def test_sends_frozen_analysis_and_chat_as_separate_messages(self) -> None:
         fake = FakeOpenAI(make_response())
         client = OpenAISecurityChatClient(

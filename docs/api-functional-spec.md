@@ -112,7 +112,8 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 - 메시지 `label`은 `normal`/`phishing`/`unknown`, URL `label`은 `benign`/`suspicious`/`malicious`/`unknown`을 사용한다.
 - `top_features`·`features`는 설명값이 없더라도 빈 배열로 반환한다.
 - 모델별 `error`는 성공 시 `null`, 실패 시 안전한 오류 객체를 사용한다.
-- 모든 결과에 `model_version`을 포함한다.
+- 모든 결과의 `model_version`은 Git으로 관리되는 모델 manifest의 `version`을 사용하고,
+  모델 파일과 manifest 변경을 같은 배포 단위로 적용한다.
 
 ## 7. 완료 기준
 
@@ -123,4 +124,4 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 - 정상·부분(`partial`)·전체 실패(`error`) 3가지 상황에서 각각 예상되는 응답 형태를 UI 팀과 합의한다.
 - API 키, 내부 예외, OpenAI 응답 원문, 요청 원문이 노출되지 않는다.
 - 모델 함수 호출과 결과 검증이 `SafeMate_모델_UI_연동_요구사항.md`와 일치한다.
-- Timeout(최대 60초), Retry(최대 2회) 정책이 API 구현에 반영된다.
+- Timeout(호출 시도당 60초), Retry(최대 2회, 최초 호출 포함 총 3회) 정책이 API 구현에 반영된다.

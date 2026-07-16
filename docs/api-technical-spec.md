@@ -314,7 +314,26 @@ def analyze_url(url: str) -> dict:
 | 환경변수 이름 (가칭) | 용도 |
 |---|---|
 | `OPENAI_API_KEY` | Responses API, File Search, Web Search 호출용 OpenAI API 키 |
+| `OPENAI_MODEL` | 후속 보안 채팅에 사용할 OpenAI 모델 식별자 |
 | `OPENAI_VECTOR_STORE_ID` | File Search가 검색할 Vector Store ID |
+
+### 9.3 확정된 운영 정책
+
+- OpenAI Responses API 호출은 시도당 60초 타임아웃과 최대 2회 재시도(최초 호출 포함 총 3회)를
+  적용한다. SDK가 재시도 가능하다고 판정하는 연결 오류, 타임아웃, rate limit, 서버 오류에만
+  지수 백오프를 적용하며 인증 및 잘못된 요청 오류는 재시도하지 않는다.
+- `overall_risk.score`는 유효한 `message_analysis.phishing_probability`와 모든
+  `url_analysis[].risk_score`의 최댓값으로 산출한다. 숫자가 아니거나, 유한하지 않거나,
+  `0.0~1.0` 범위를 벗어난 값은 제외한다. 유효한 점수가 없으면 `score: null`, `level: unknown`이다.
+- 위험 단계는 `[0.0, 0.4)`를 `low`, `[0.4, 0.7)`를 `medium`, `[0.7, 1.0]`을 `high`로 판정한다.
+- 로컬 모델 파일은 Git에서 제외하고 `models/`에 수동 배치한다. `models/manifest.json`에는 모델별
+  `version`, `filename`, `sha256`, `serializer`를 기록한다. 로딩 전에 경로와 SHA-256을 검증하고,
+  검증 또는 역직렬화 실패 시 해당 모델 분석 실패로 처리하며 대체 모델을 임의 사용하지 않는다.
+- Web Search와 UI 링크 검증은 `src/services/web_search.py`의 동일한 고정 allowlist를 사용한다.
+  허용 대상은 11개 국내 공공기관 도메인의 HTTPS 기본 포트 및 정상 하위 도메인뿐이며,
+  환경변수로 목록을 확장하지 않는다.
+  허용 도메인은 `kisa.or.kr`, `boho.or.kr`, `krcert.or.kr`, `police.go.kr`, `fss.or.kr`,
+  `privacy.go.kr`, `pipc.go.kr`, `ncsc.go.kr`, `msit.go.kr`, `gov.kr`, `korea.kr`이다.
 
 
 ## 10. 향후 HTTP API 전환 규칙
@@ -346,3 +365,8 @@ Content-Type: application/json
 - `overall_risk.score` 산출 로직 고도화
 (초기 버전은 메시지 모델의 phishing_probability와 URL 모델의 risk_score 중 유효한 최댓값(max)을 사용하며, 향후 고도화 시 추가 점수 산출 정책을 검토한다.)
 - Agent Orchestrator(여러 분석 단계를 조율하는 멀티에이전트 구조)
+
+## 12. 남은 협의 사항
+
+- 8절 모델 함수 계약과 실제 모델 구현이 `SafeMate_모델_UI_연동_요구사항.md` 기준으로
+  일치하는지 최종 확인

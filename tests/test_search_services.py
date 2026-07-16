@@ -37,6 +37,25 @@ class WebSearchServiceTest(unittest.TestCase):
             is_official_source_url("https://kisa.or.kr@security.example/guide")
         )
 
+    def test_accepts_every_reviewed_domain_and_its_subdomains(self) -> None:
+        for domain in OFFICIAL_SOURCE_DOMAINS:
+            with self.subTest(domain=domain):
+                self.assertTrue(is_official_source_url(f"https://{domain}/guide"))
+                self.assertTrue(
+                    is_official_source_url(f"https://notice.{domain}/guide")
+                )
+
+    def test_rejects_domain_confusion_and_nonstandard_ports(self) -> None:
+        rejected = (
+            "https://kisa.or.kr.evil.example/guide",
+            "https://fakekisa.or.kr/guide",
+            "https://kisa.or.kr:444/guide",
+            "https://user:password@kisa.or.kr/guide",
+        )
+        for url in rejected:
+            with self.subTest(url=url):
+                self.assertFalse(is_official_source_url(url))
+
     def test_identifies_web_search_call(self) -> None:
         self.assertTrue(is_web_search_call({"type": "web_search_call"}))
         self.assertFalse(is_web_search_call({"type": "message"}))
