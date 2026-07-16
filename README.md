@@ -2,9 +2,9 @@
 
 SafeMate AI는 의심스러운 문자 메시지와 `.eml` 이메일을 입력받아 위험 신호를 정리하고, 사용자가 취할 수 있는 대응 방법을 안내하는 Streamlit 기반 교육용 보안 도구입니다.
 
-현재 Streamlit UI의 기본 1차 분석 backend는 실제 로컬 모델 대신 결정론적인 Mock 클라이언트를 사용합니다. 로컬 메시지·URL 모델 연결은 진행 중이며, 화면 결과를 실제 피싱 확정 판정으로 사용하지 않습니다.
+Streamlit UI의 1차 분석은 저장소에 포함된 로컬 문자·이메일·URL 모델을 직접 호출합니다. 결과는 위험 신호를 안내하기 위한 참고 정보이며 실제 피싱 확정 판정으로 사용하지 않습니다.
 
-> 아래 화면 예시는 실제 모델 연결 전 Mock 분석 결과입니다.
+> 아래 화면 예시는 합성 입력으로 캡처한 예시이며 현재 모델 결과와 수치가 다를 수 있습니다.
 
 ## 주요 기능
 
@@ -12,9 +12,9 @@ SafeMate AI는 의심스러운 문자 메시지와 `.eml` 이메일을 입력받
 - `.eml` 확장자, 크기, 파일 시그니처, 이메일 구조 검증과 안전한 파싱
 - 본문, HTML 링크의 `href`, 이미지 `src`에서 URL 후보 추출
 - 이메일 표시 URL과 실제 연결 URL의 도메인 불일치 탐지
-- Mock 메시지·URL 분석과 종합 주의 수준 계산
+- 로컬 문자·이메일·URL 모델 분석과 종합 주의 수준 계산
 - 위험 이유, 즉시 대응 방법과 분석 한계 표시
-- Matplotlib 기반 피싱 확률과 특징 기여도 시각화
+- Matplotlib 기반 메시지 통합 점수와 URL 특징 시각화
 - 1차 분석 완료 후 OpenAI 기반 보안 비서 후속 채팅
 
 ## UI 화면 미리보기
@@ -25,7 +25,7 @@ SafeMate AI는 의심스러운 문자 메시지와 `.eml` 이메일을 입력받
 
 ![SafeMate AI 문자 메시지 입력 화면](docs/images/safemate-input.png)
 
-### 2. Mock 분석 결과
+### 2. 분석 결과
 
 ![SafeMate AI 종합 위험도와 대응 방법](docs/images/safemate-analysis-result.png)
 
@@ -40,7 +40,7 @@ SafeMate AI는 의심스러운 문자 메시지와 `.eml` 이메일을 입력받
 1. 사용자가 문자 메시지를 붙여넣거나 `.eml` 파일을 업로드합니다.
 2. 입력 형식과 크기를 검증하고, 이메일은 실행하거나 HTML로 렌더링하지 않은 채 헤더와 본문을 파싱합니다.
 3. 본문과 이메일 속성에서 URL 후보를 추출하고 표시 URL과 실제 연결 URL의 불일치를 확인합니다. 이 과정에서 URL에 접속하지 않습니다.
-4. 기본 `mock` backend가 메시지와 URL 분석 결과를 만들고 유효한 점수 중 최댓값으로 종합 주의 수준을 계산합니다.
+4. 로컬 문자·이메일 모델과 URL 모델을 호출하고 유효한 점수 중 최댓값으로 종합 주의 수준을 계산합니다.
 5. UI가 위험 이유, 대응 방법, 세부 결과, Matplotlib 그래프와 분석 한계를 표시합니다.
 6. 분석이 끝나면 사용자가 결과에 대해 후속 질문을 입력할 수 있습니다. 이 대화는 1차 판정에 다시 반영되지 않습니다.
 
@@ -76,7 +76,8 @@ streamlit run app.py
 OPENAI_API_KEY=
 OPENAI_MODEL=
 OPENAI_VECTOR_STORE_ID=
-SAFEMATE_ANALYSIS_BACKEND=mock
+SAFEMATE_URL_MODEL_PATH=
+SAFEMATE_URL_MODEL_KIND=char
 ```
 
 | 변수 | 설명 |
@@ -84,9 +85,10 @@ SAFEMATE_ANALYSIS_BACKEND=mock
 | `OPENAI_API_KEY` | 분석 후 보안 비서 채팅에서 사용할 OpenAI API 키입니다. 저장소에 커밋하지 마세요. |
 | `OPENAI_MODEL` | 후속 채팅에 사용할 OpenAI 모델 이름입니다. |
 | `OPENAI_VECTOR_STORE_ID` | 선택 항목입니다. 설정하면 등록된 보안 문서 검색을 후속 채팅에 사용할 수 있습니다. |
-| `SAFEMATE_ANALYSIS_BACKEND` | 현재 지원되는 값은 `mock`입니다. `local`과 `api`는 연동 완료 전까지 명시적으로 거부됩니다. |
+| `SAFEMATE_URL_MODEL_PATH` | 선택 항목입니다. 비어 있으면 저장소에 포함된 기본 URL 모델을 사용합니다. |
+| `SAFEMATE_URL_MODEL_KIND` | URL 모델 종류입니다. 기본값은 현재 모델 산출물에 맞는 `char`입니다. |
 
-`OPENAI_VECTOR_STORE_ID`가 비어 있으면 후속 채팅의 File Search는 사용하지 않습니다. API 설정이 없거나 외부 연결이 불가능해도 1차 Mock 분석 화면은 확인할 수 있지만 후속 답변 생성은 실패할 수 있습니다.
+1차 분석은 별도 백엔드 선택 없이 저장소의 로컬 문자·이메일·URL 모델을 직접 사용합니다. `OPENAI_VECTOR_STORE_ID`가 비어 있으면 후속 채팅의 File Search는 사용하지 않습니다.
 
 ## 운영 정책
 
@@ -124,12 +126,12 @@ SAFEMATE_ANALYSIS_BACKEND=mock
 | `.eml` 검증 및 파싱 | 구현 | 확장자, 크기, 시그니처, 구조 검증 포함 |
 | URL 추출 | 구현 | 본문, `href`, 이미지 `src` 대상 |
 | 표시 URL과 실제 연결 URL 불일치 탐지 | 구현 | 이메일 HTML 링크의 도메인 비교 |
-| 1차 분석 | Mock 구현 | 기본 backend이며 실제 로컬 모델 결과가 아님 |
-| Matplotlib 시각화 | 구현 | 메시지 확률·기여도와 URL 특징 시각화 |
+| 1차 분석 | 구현 | 로컬 문자·이메일·URL 모델을 직접 호출 |
+| Matplotlib 시각화 | 구현 | 메시지 통합 점수와 URL 특징 시각화 |
 | 분석 후 보안 비서 채팅 | 구현 | OpenAI 설정과 네트워크 필요 |
-| 로컬 메시지·URL 모델 연결 | 진행 중 | 추론 모듈과 `LocalAnalysisClient` 계약 정합화 필요 |
+| 로컬 메시지·URL 모델 연결 | 구현 | `LocalAnalysisClient`가 공통 응답 계약으로 통합 |
 
-모델 파일 형식, 저장 위치와 로딩 방식은 실제 모델 연동 단계에서 확정합니다. 현재 코드에는 `models/manifest.json` 또는 SHA-256 manifest 계약을 전제하지 않습니다.
+모델 파일은 `models/`에 배치하며 URL 모델 경로와 종류는 선택적 환경변수로 재정의할 수 있습니다.
 
 ## 테스트
 
@@ -147,8 +149,8 @@ SafeMate-AI/
 ├── src/
 │   ├── analyzers/            # 입력·이메일 파싱과 모델 분석 진입점
 │   ├── services/             # OpenAI Web/File Search 및 후속 채팅
-│   ├── ui/                   # UI 컴포넌트, Mock 분석, 시각화
-│   ├── client_factory.py     # 분석 backend 선택
+│   ├── ui/                   # UI 컴포넌트, 로컬 분석 어댑터, 시각화
+│   ├── client_factory.py     # 로컬 분석 클라이언트 구성
 │   ├── contracts.py          # 공통 요청과 클라이언트 계약
 │   ├── config.py             # 입력 제한과 운영 설정
 │   └── pipeline.py           # 종합 위험도 계산 정책

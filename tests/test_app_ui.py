@@ -15,14 +15,14 @@ class AppChatUiTest(unittest.TestCase):
         app.button[0].click().run(timeout=10)
 
         labels = [button.label for button in app.button]
-        self.assertIn("지금 가장 먼저 해야 할 일은 무엇인가요?", labels)
-        self.assertIn("이미 링크를 눌렀다면 어떻게 해야 하나요?", labels)
+        self.assertIn("추가로 확인해야 할 위험 요소가 있나요?", labels)
+        self.assertIn("이 문자가 정상인지 확인하는 방법을 알려주세요.", labels)
         self.assertIn("이 URL에서 어떤 위험 신호가 발견됐나요?", labels)
         self.assertEqual(
             app.chat_input[0].placeholder,
             "분석 결과에 대해 궁금한 점을 직접 입력하세요.",
         )
-        self.assertEqual(len(app.get("image")), 5)
+        self.assertEqual(len(app.get("image")), 2)
         self.assertEqual(len(app.exception), 0)
 
 

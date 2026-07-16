@@ -44,13 +44,13 @@ def test_local_url_client_runs_url_model_and_preserves_candidate_metadata():
         return_value=model_result,
     ) as analyze_url:
         result = LocalUrlAnalysisClient(
-            model_path="models/url_char_model.joblib"
+            url_model_path="models/url_char_model.joblib"
         ).analyze(request)
 
     analyze_url.assert_called_once_with(
         "https://evil.example/login",
         model_path="models/url_char_model.joblib",
-        model_kind="feature",
+        model_kind="char",
     )
     assert result["request_id"] == "analysis-local-url"
     assert result["message_analysis"]["status"] == "skipped"

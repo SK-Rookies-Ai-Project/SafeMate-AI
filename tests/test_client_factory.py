@@ -1,58 +1,35 @@
 import unittest
 from unittest.mock import patch
 
-from src.client_factory import (
-    AnalysisBackendConfigurationError,
-    get_analysis_client,
-)
-from src.ui.local_url_client import LocalUrlAnalysisClient
-from src.ui.mock_client import MockAnalysisClient
+from src.client_factory import get_analysis_client
+from src.ui.local_analysis_client import LocalAnalysisClient
 
 
 class AnalysisClientFactoryTest(unittest.TestCase):
-    def test_defaults_to_mock_backend(self) -> None:
+    def test_builds_combined_local_client_by_default(self) -> None:
         with patch("src.client_factory.load_dotenv"), patch.dict(
             "os.environ", {}, clear=True
         ):
             client = get_analysis_client()
 
-        self.assertIsInstance(client, MockAnalysisClient)
+        self.assertIsInstance(client, LocalAnalysisClient)
+        self.assertIsNone(client.url_model_path)
+        self.assertEqual(client.url_model_kind, "char")
 
-    def test_normalizes_configured_backend(self) -> None:
-        with patch("src.client_factory.load_dotenv"), patch.dict(
-            "os.environ",
-            {"SAFEMATE_ANALYSIS_BACKEND": "  MoCk  "},
-            clear=True,
-        ):
-            client = get_analysis_client()
-
-        self.assertIsInstance(client, MockAnalysisClient)
-
-    def test_returns_local_url_backend(self) -> None:
+    def test_applies_url_model_configuration(self) -> None:
         with patch("src.client_factory.load_dotenv"), patch.dict(
             "os.environ",
             {
-                "SAFEMATE_ANALYSIS_BACKEND": "local_url",
-                "SAFEMATE_URL_MODEL_PATH": "models/url_char_model.joblib",
+                "SAFEMATE_URL_MODEL_PATH": "models/custom-url.joblib",
+                "SAFEMATE_URL_MODEL_KIND": " tfidf ",
             },
             clear=True,
         ):
             client = get_analysis_client()
 
-        self.assertIsInstance(client, LocalUrlAnalysisClient)
-        self.assertEqual(client.model_path, "models/url_char_model.joblib")
-
-    def test_rejects_unavailable_backend_without_fallback(self) -> None:
-        for backend in ("local", "api", ""):
-            with self.subTest(backend=backend), patch(
-                "src.client_factory.load_dotenv"
-            ), patch.dict(
-                "os.environ",
-                {"SAFEMATE_ANALYSIS_BACKEND": backend},
-                clear=True,
-            ):
-                with self.assertRaises(AnalysisBackendConfigurationError):
-                    get_analysis_client()
+        self.assertIsInstance(client, LocalAnalysisClient)
+        self.assertEqual(client.url_model_path, "models/custom-url.joblib")
+        self.assertEqual(client.url_model_kind, "tfidf")
 
 
 if __name__ == "__main__":

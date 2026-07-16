@@ -1,4 +1,4 @@
-"""Local analysis client that runs only the URL model."""
+"""Local adapter that runs the URL model and builds an analysis response."""
 
 from __future__ import annotations
 
@@ -12,16 +12,16 @@ from src.ui.url_candidates import deduplicate_and_prioritize
 
 
 class LocalUrlAnalysisClient:
-    """Return AnalysisResponse-compatible results using the local URL analyzer."""
+    """Build AnalysisResponse-compatible results from the local URL analyzer."""
 
     def __init__(
         self,
         *,
-        model_path: Optional[Union[str, Path]] = None,
-        model_kind: str = "feature",
+        url_model_path: Optional[Union[str, Path]] = None,
+        url_model_kind: str = "char",
     ) -> None:
-        self.model_path = model_path
-        self.model_kind = model_kind
+        self.url_model_path = url_model_path
+        self.url_model_kind = url_model_kind
 
     def analyze(self, payload: dict) -> dict:
         candidates = payload.get("url_candidates", [])
@@ -66,8 +66,8 @@ class LocalUrlAnalysisClient:
     def _analyze_candidate(self, candidate: dict) -> dict:
         result = url_analyzer.analyze_url(
             candidate["url"],
-            model_path=self.model_path,
-            model_kind=self.model_kind,
+            model_path=self.url_model_path,
+            model_kind=self.url_model_kind,
         )
         merged = {
             **result,

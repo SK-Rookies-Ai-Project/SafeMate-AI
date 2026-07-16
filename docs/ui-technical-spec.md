@@ -516,7 +516,7 @@ HTML 링크의 표시 텍스트에 URL이 포함된 경우 다음 메타데이�
 
 ## 11. 로컬 분석 인터페이스
 
-`src/pipeline.py`에 UI가 의존할 인터페이스를 정의한다.
+`src/contracts.py`의 `AnalysisClient` 프로토콜을 통해 UI와 분석 구현을 분리한다.
 
 ```python
 class AnalysisClient:
@@ -526,16 +526,17 @@ class AnalysisClient:
 
 class LocalAnalysisClient(AnalysisClient):
     def analyze(self, payload: "AnalysisRequest") -> "AnalysisResponse":
-        # input_type에 따라 공통 분석기와 OpenAI 서비스를 호출한다.
+        # 입력 유형에 맞는 로컬 메시지 모델과 URL 모델을 호출한다.
         ...
 
 
 class MockAnalysisClient(AnalysisClient):
+    # 테스트와 UI fixture에서만 명시적으로 사용한다.
     def analyze(self, payload: "AnalysisRequest") -> "AnalysisResponse":
         return MOCK_ANALYSIS_RESULT
 ```
 
-`app.py`는 실제 분석 과정이나 Mock 분기를 직접 구현하지 않고 `AnalysisClient`만 호출한다.
+`app.py`는 별도 backend 분기 없이 `LocalAnalysisClient`를 구성한 뒤 `AnalysisClient` 계약으로 호출한다.
 
 ## 12. 모델 호출 및 데이터 형식 계약
 
