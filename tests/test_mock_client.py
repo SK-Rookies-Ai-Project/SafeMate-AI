@@ -18,6 +18,7 @@ class MockAnalysisClientTest(unittest.TestCase):
         self.assertEqual(result["input_type"], "sms")
         self.assertEqual(result["overall_risk"]["level"], "high")
         self.assertEqual(result["url_analysis_summary"]["analyzed_count"], 1)
+        self.assertEqual(result["url_analysis_summary"]["failed_count"], 0)
         self.assertEqual(result["url_analysis"][0]["status"], "success")
         self.assertEqual(len(result["url_analysis"][0]["features"]), 3)
         self.assertTrue(result["message_analysis"]["top_features"])

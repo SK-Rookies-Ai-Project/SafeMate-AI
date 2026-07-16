@@ -93,6 +93,7 @@ class MockAnalysisClient:
                 "candidate_count": len(unique_candidates),
                 "analyzed_count": len(selected),
                 "omitted_url_count": max(0, len(unique_candidates) - len(selected)),
+                "failed_count": 0,
             },
             "url_analysis": url_analysis,
             "web_evidence": [],
