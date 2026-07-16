@@ -3,7 +3,7 @@
 # 파일명: train_email_spam_model.py
 #
 # 목적:
-# 한국어 이메일 데이터를 기반으로 TF-IDF + Logistic Regression 모델을 학습하고,
+# 한국어 이메일 데이터를 기반으로 단어 TF-IDF + 문자 TF-IDF + Logistic Regression 모델을 학습하고,
 # 학습된 Pipeline 모델을 .pkl 파일로 저장한다.
 #
 # 실행 예시:
@@ -18,7 +18,7 @@ import pickle
 import pandas as pd
 
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -34,7 +34,7 @@ from sklearn.metrics import (
 # 1. 기본 경로 설정
 
 DEFAULT_DATA_PATH = 'data/raw/korean_spam_ham_binary_dataset_6272row.csv'
-DEFAULT_MODEL_PATH = 'models/email_spam_logistic_tfidf.pkl'
+DEFAULT_MODEL_PATH = 'models/email_spam_logistic_word_char_tfidf.pkl'
 
 
 # 2. 데이터 불러오기 함수
@@ -180,21 +180,41 @@ def split_train_test(X, y):
     return X_train, X_test, y_train, y_test
 
 
-# 8. TF-IDF + 로지스틱 회귀 Pipeline 생성 함수
+# 8. 단어 TF-IDF + 문자 TF-IDF + 로지스틱 회귀 Pipeline 생성 함수
 # 입력값 : 없음
 # 반환값 : Pipeline 모델
 
 def build_model():
-    # Pipeline -> TF-IDF 변환과 로지스틱 회귀를 하나의 흐름으로 연결
+    # FeatureUnion
+    # -> 단어 단위 TF-IDF와 문자 단위 TF-IDF 결과를 하나로 합친다.
+    #
+    # Pipeline
+    # -> 합쳐진 TF-IDF 특성을 로지스틱 회귀에 전달한다.
     model = Pipeline([
         (
             'tfidf',
-            TfidfVectorizer(
-                ngram_range=(1, 2),  # 한 단어와 연속된 두 단어 사용
-                min_df=2,            # 2개 미만 문서에 등장한 단어 제외
-                max_features=20000,  # 최대 특성 개수 제한
-                sublinear_tf=True    # 반복 단어 횟수의 과도한 영향 완화
-            )
+            FeatureUnion([
+                (
+                    'word_tfidf',
+                    TfidfVectorizer(
+                        analyzer='word',
+                        ngram_range=(1, 2),  # 한 단어와 연속된 두 단어 사용
+                        min_df=2,            # 2개 미만 문서에 등장한 단어 제외
+                        max_features=20000,  # 단어 특성 최대 개수
+                        sublinear_tf=True    # 반복 단어 횟수의 과도한 영향 완화
+                    )
+                ),
+                (
+                    'char_tfidf',
+                    TfidfVectorizer(
+                        analyzer='char',
+                        ngram_range=(2, 5),  # 연속된 2~5개 문자 조각 사용
+                        min_df=2,            # 2개 미만 문서에 등장한 문자 조각 제외
+                        max_features=30000,  # 문자 특성 최대 개수
+                        sublinear_tf=True    # 반복 문자 조각의 과도한 영향 완화
+                    )
+                )
+            ])
         ),
         (
             'model',
