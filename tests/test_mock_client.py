@@ -2,11 +2,8 @@ import unittest
 
 from src.analyzers.input_parser import prepare_sms_input
 from src.config import MAX_ANALYSIS_REQUEST_BYTES, MAX_URL_CANDIDATES
-from src.ui.mock_client import (
-    AnalysisRequestValidationError,
-    MockAnalysisClient,
-    build_analysis_request,
-)
+from src.contracts import AnalysisRequestValidationError, build_analysis_request
+from src.ui.mock_client import MockAnalysisClient
 
 
 class MockAnalysisClientTest(unittest.TestCase):

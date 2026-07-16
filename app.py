@@ -12,6 +12,7 @@ from src.analyzers.input_parser import (
     prepare_sms_input,
 )
 from src.config import MAX_SMS_CHARS
+from src.contracts import AnalysisRequestValidationError, build_analysis_request
 from src.services.openai_client import (
     MAX_CHAT_QUESTION_CHARS,
     OpenAISecurityChatClient,
@@ -23,11 +24,7 @@ from src.ui.components import (
     render_data_notice,
     render_preview,
 )
-from src.ui.mock_client import (
-    AnalysisRequestValidationError,
-    MockAnalysisClient,
-    build_analysis_request,
-)
+from src.ui.mock_client import MockAnalysisClient
 
 
 logger = logging.getLogger(__name__)
