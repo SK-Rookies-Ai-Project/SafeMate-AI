@@ -115,7 +115,8 @@ AnalysisResponse 검증 후 반환 (API-F-08)
       `unknown`)이 공통계약과 정확히 일치하는가
 - [ ] `top_features`·`features`가 항상 배열로 오는지(빈 배열 vs `null`)
 - [ ] 모델 실패 시 예외를 던지는지, `error` 필드로 실패를 알리는지
-- [ ] `model_version` 표기 규칙과 버전 변경 시 공지 절차
+- [x] `model_version`은 Git으로 관리되는 모델 manifest의 `version`을 사용하고, 모델 파일과
+      manifest 변경을 같은 배포 단위로 적용한다.
 
 ## 7. 완료 기준
 
@@ -126,4 +127,4 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 - 정상·부분(`partial`)·전체 실패(`error`) 3가지 상황에서 각각 예상되는 응답 형태를 UI 팀과 합의한다.
 - API 키, 내부 예외, OpenAI 응답 원문, 요청 원문이 노출되지 않는다.
 - 모델 함수 계약이 `SafeMate_모델_UI_연동_요구사항.md`와 일치하도록 최종 반영된다.
-- Timeout(최대 60초), Retry(최대 2회) 정책이 API 구현에 반영된다.
+- Timeout(호출 시도당 60초), Retry(최대 2회, 최초 호출 포함 총 3회) 정책이 API 구현에 반영된다.
