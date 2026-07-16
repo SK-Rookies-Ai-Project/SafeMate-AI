@@ -42,12 +42,12 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 ### API 서비스 담당
 
 - `input_type`, 제목, 필터링된 본문과 URL 후보 재검증
-- OpenAI Responses API에 `classify_message`와 `analyze_urls` 도구 등록
-- OpenAI가 요청한 Function Calling을 로컬 피싱·URL 모델로 실행
+- `analyze_message(body, input_type, subject)` 직접 호출
 - URL 재검증·중복 제거·우선순위 적용·최대 개수 제한
-- Function Calling 결과를 OpenAI에 반환
+- 선정된 각 URL 문자열에 대해 `analyze_url(url)` 직접 호출
+- 모델 결과와 URL 후보 메타데이터 통합
 - Web Search·File Search 실행
-- LLM 최종 결과 생성
+- 모델 결과와 검색 근거를 바탕으로 LLM 사용자용 설명 생성
 
 ### 데이터 처리 원칙
 
@@ -248,7 +248,7 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 - [x] URL 후보는 SMS 텍스트, 이메일 텍스트와 HTML `href`·외부 이미지 `src`에서 추출한다.
 - [x] URL 후보의 출처 유형과 원본 위치를 내부 요청에 보존한다.
 - [x] URL 선택·중복 제거·20개 제한은 `url_analyzer.py`에서 한 번만 수행한다.
-- [x] OpenAI Function Calling으로 `classify_message`와 `analyze_urls`를 호출한다.
+- [x] 분석 파이프라인이 `analyze_message()`와 URL별 `analyze_url()`을 직접 호출한다.
 - [x] 실제 단계 상태가 없는 경우 통합 로딩만 표시한다.
 - [x] 의심 URL은 비활성화하고 검증된 공식 출처는 클릭 가능하게 표시한다.
 - [ ] API 타임아웃

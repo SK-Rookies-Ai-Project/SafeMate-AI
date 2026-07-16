@@ -17,9 +17,8 @@ project: SafeMate AI
 파이프라인)가 어떻게 채우는지 정의한다. 이 문서는 계약을 새로 정의하지 않으며, 계약 자체가
 바뀌면 `SafeMate_분석_통합_UI_공통계약.md`를 먼저 수정한 뒤 이 문서를 따라 수정한다.
 
-> 이메일 분류 모델(`analyze_message`)과 URL 분석 모델(`analyze_url`)이 반환할 상세 값은
-> `SafeMate_모델_UI_연동_요구사항.md`가 별도로 정의한다. 이 문서 8절은 그 문서가 아직 공유되기
-> 전까지 API 팀이 잡아둔 초안이며, 모델팀 확인 후 8절을 해당 문서 기준으로 갱신한다.
+> 이메일 분류 모델(`analyze_message`)과 URL 분석 모델(`analyze_url`)의 입력·반환 계약은
+> `SafeMate_모델_UI_연동_요구사항.md`를 따른다.
 
 ## 2. 공통 계약 원칙
 
@@ -153,9 +152,9 @@ Streamlit UI
 ```text
 1) AnalysisRequest 검증 통과 (3절)
         ↓
-2) analyze_message(body) 직접 호출 → message_analysis 채움
+2) analyze_message(body, input_type, subject) 직접 호출 → message_analysis 채움
         ↓
-3) url_candidates 재검증·중복 제거 → 각 URL마다 analyze_url(candidate) 직접 호출
+3) url_candidates 재검증·중복 제거 → 각 candidate["url"]마다 analyze_url(url) 직접 호출
    → url_analysis, url_analysis_summary 채움
         ↓
 4) Responses API 호출 (web_search, file_search 도구 사용)
@@ -183,7 +182,7 @@ Streamlit UI
 - File Search는 호출당 최대 5개의 관련 결과를 반환한다.
 - Web Search는 결과 개수 제한을 두지 않는다.
 - Search 호출 여부는 GPT가 판단한다.
-- 응답당 Tool(Function Calling)은 최대 6회까지 호출한다.
+- 응답당 OpenAI 도구 호출은 최대 6회까지 허용한다.
 
 ### 처리 시 유의사항
 
@@ -262,47 +261,37 @@ OpenAI가 돌려주는 `web_search`·`file_search` 도구 결과는 필드 이�
 채우고, 그 외에는 생략한다. `message`는 UI에 그대로 노출해도 되는 사용자용 문구여야 하며, 원문·API
 키·내부 파일 경로·스택트레이스를 포함하지 않는다(공통계약 10절).
 
-## 8. 모델 함수 계약 (모델팀 확인 필요)
+## 8. 모델 함수 계약
 
-`analyze_message`, `analyze_url`은 각 모델팀이 구현하고 API 파이프라인이 직접 호출하는 함수이다
-(공통계약 13절 "책임 분리"). 정식 계약은 `SafeMate_모델_UI_연동_요구사항.md`에서 정의하며, 아래는
-그 문서가 공유되기 전까지 API 팀이 공통계약 6·8절의 `message_analysis`·`url_analysis` 필드를
-역산해 잡아둔 초안이다.
+`analyze_message`, `analyze_url`은 각 모델팀이 구현하고 API 파이프라인이 직접 호출하는 함수이다. 정식 계약은 `SafeMate_모델_UI_연동_요구사항.md`에서 정의한다.
 
 ```python
-def analyze_message(body: str) -> dict:
-    """
-    return {
-        "label": "normal" | "phishing" | "unknown",
-        "phishing_probability": float | None,   # 0.0 ~ 1.0
-        "signals": list[str],
-        "top_features": list[{"name": str, "value": float, "contribution": float}],
-        "model_version": str,
-    }
-    """
+from typing import Literal
 
-def analyze_url(candidate: dict) -> dict:
-    """
-    candidate: AnalysisRequest.url_candidates의 항목 하나
-    return {
-        "label": "benign" | "suspicious" | "malicious" | "unknown",
-        "risk_score": float | None,   # 0.0 ~ 1.0
-        "signals": list[str],
-        "features": list[{"name": str, "raw_value": float, "normalized_value": float, "contribution": float}],
-        "model_version": str,
-    }
-    """
+
+def analyze_message(
+    text: str,
+    input_type: Literal["sms", "email"],
+    subject: str | None = None,
+) -> dict:
+    """Return the message-model result defined by the model–UI contract."""
+    ...
+
+
+def analyze_url(url: str) -> dict:
+    """Return the URL-model result defined by the model–UI contract."""
+    ...
 ```
 
-### 모델팀에 확인할 항목
+호출과 통합 규칙:
 
-- `SafeMate_모델_UI_연동_요구사항.md` 공유 후, 위 초안과 실제 반환 필드·자료형이 일치하는지 확인
-- `label` enum 값이 공통계약과 정확히 일치하는지(`message_analysis`: `normal`/`phishing`/`unknown`,
-  `url_analysis`: `benign`/`suspicious`/`malicious`/`unknown`)
-- `top_features`·`features`가 항상 배열로 오는지(설명값이 없을 때 `null`이 아니라 빈 배열인지,
-  공통계약 6·8절 기준)
-- 모델 실패 시 예외를 던지는지, `error` 필드로 실패를 알리는지
-- `model_version` 표기 규칙과 버전 변경 시 API에 알리는 절차
+- API는 `analyze_message(payload["body"], payload["input_type"], payload["subject"])`를 호출한다.
+- API는 URL 후보를 재검증·중복 제거·우선순위화한 뒤 최대 20개의 `candidate["url"]`을 `analyze_url()`에 하나씩 전달한다.
+- URL 후보의 위치·출처·표시 주소 메타데이터와 HTML 정적 검사 신호는 API가 모델 결과에 병합한다.
+- URL 모델이 반환한 `url`이 입력 문자열과 다르면 계약 오류로 처리한다.
+- `top_features`·`features`는 설명값이 없더라도 빈 배열이어야 한다.
+- 모델별 `error`는 성공 시 `null`, 실패 시 안전한 오류 객체여야 한다.
+- 모델 반환값은 `json.dumps(result, allow_nan=False)`로 직렬화할 수 있어야 한다.
 
 ## 9. 파일 배치와 환경변수
 
@@ -357,7 +346,3 @@ Content-Type: application/json
 - `overall_risk.score` 산출 로직 고도화
 (초기 버전은 메시지 모델의 phishing_probability와 URL 모델의 risk_score 중 유효한 최댓값(max)을 사용하며, 향후 고도화 시 추가 점수 산출 정책을 검토한다.)
 - Agent Orchestrator(여러 분석 단계를 조율하는 멀티에이전트 구조)
-
-## 12. 남은 협의 사항
-
-- 8절 모델 함수 계약을 `SafeMate_모델_UI_연동_요구사항.md` 기준으로 최종 확정

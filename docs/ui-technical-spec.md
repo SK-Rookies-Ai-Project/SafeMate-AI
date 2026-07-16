@@ -16,7 +16,7 @@ SafeMate AI의 Streamlit UI 구현 구조, 공통 분석 파이프라인, 로컬
 
 ## 2. MVP 아키텍처 결정
 
-MVP는 Streamlit과 분석 코드를 같은 저장소와 실행 환경에서 구동한다. 별도 FastAPI 서버를 만들지 않고 `app.py`가 `src/pipeline.py`의 로컬 Python 인터페이스를 호출한다. 피싱·URL 모델은 OpenAI Responses API의 커스텀 도구로 등록하며, OpenAI가 반환한 Function Calling 요청에 따라 로컬에서 실행한다.
+MVP는 Streamlit과 분석 코드를 같은 저장소와 실행 환경에서 구동한다. 별도 FastAPI 서버를 만들지 않고 `app.py`가 `src/pipeline.py`의 로컬 Python 인터페이스를 호출한다. `LocalAnalysisClient`는 메시지·URL 모델을 명시적 Python 함수로 직접 호출하고, OpenAI Responses API는 검색 근거 취합과 사용자용 설명 생성에만 사용한다.
 
 ```text
 Streamlit app.py
@@ -24,11 +24,9 @@ Streamlit app.py
 → SMS 텍스트 정규화 또는 .eml 검증·파싱
 → URL 후보가 포함된 공통 AnalysisRequest 생성
 → src.pipeline.LocalAnalysisClient
-→ OpenAI Responses API 호출(tools 등록)
-→ OpenAI가 classify_message·analyze_urls Function Calling 요청
-→ pipeline이 로컬 메시지·URL 모델 실행
-→ function_call_output을 OpenAI에 반환
-→ Web Search·File Search 및 최종 결과 종합
+→ pipeline이 analyze_message(body, input_type, subject) 직접 호출
+→ URL 후보별 analyze_url(candidate["url"]) 직접 호출
+→ 모델 결과를 바탕으로 Web Search·File Search 및 최종 설명 종합
 → 표준 AnalysisResponse 반환
 → Streamlit 결과 렌더링
 ```
@@ -80,7 +78,7 @@ SafeMate-AI/
 | `src/analyzers/file_parser.py` | `.eml` 검증·파싱, 텍스트 URL 및 HTML `href`·외부 이미지 `src` 후보 추출 |
 | `src/analyzers/text_analyzer.py` | `input_type`에 따른 문자·이메일 피싱 모델 입력 구성 및 호출 |
 | `src/analyzers/url_analyzer.py` | URL 재검증·중복 제거·URL별 모델 호출 |
-| `src/services/openai_client.py` | OpenAI Responses API와 Function Calling 연동 |
+| `src/services/openai_client.py` | OpenAI Responses API의 Web Search·File Search와 사용자용 설명 생성 연동 |
 | `src/services/web_search.py` | 최신 위협 사례 검색과 Web 근거 정규화 |
 | `src/services/file_search.py` | 공식 지침 검색과 File 근거 정규화 |
 | `src/ui/components.py` | 입력 유형 선택, SMS 입력, 이메일 업로드, 미리보기, 결과 카드, 오류 UI 구성요소 |
@@ -125,12 +123,12 @@ SafeMate-AI/
 ### 분석 API 서비스
 
 - `input_type`, 제목, 필터링된 본문과 URL 후보 재검증
-- OpenAI Responses API에 `classify_message`와 `analyze_urls` 커스텀 도구 등록
-- OpenAI의 Function Calling 요청 수신 및 로컬 모델 실행
-- `url_analyzer.py`에서 URL 재검증·중복 제거·우선순위·20개 제한을 한 번만 적용
-- 도구 실행 결과를 `function_call_output`으로 OpenAI에 반환
+- `analyze_message(body, input_type, subject)` 직접 호출
+- URL 후보를 재검증·중복 제거·우선순위화하고 최대 20개의 `candidate["url"]`에 대해 `analyze_url(url)` 직접 호출
+- URL 후보 메타데이터와 HTML 정적 검사 신호를 URL 모델 결과에 병합
 - Web Search·File Search 실행
-- LLM 결과 종합 및 표준 응답 생성
+- 로컬 모델 결과와 검색 근거를 바탕으로 LLM 사용자용 설명 생성
+- 표준 `AnalysisResponse` 조립·검증
 
 ## 5. 전체 데이터 흐름
 
@@ -153,12 +151,11 @@ SMS 원문 붙여넣기
 
 [공통 처리]
 → input_type, subject, 필터링된 body, url_candidates로 AnalysisRequest 생성
-→ LocalAnalysisClient가 OpenAI Responses API 호출
-→ OpenAI가 classify_message 또는 analyze_urls 도구 호출 요청
-→ classify_message는 문자·이메일 모델 실행
-→ analyze_urls는 URL 후보를 재검증·중복 제거하고 최대 20개 선택 후 URL별 모델 실행
-→ function_call_output을 OpenAI에 반환
-→ Web Search·File Search·LLM 결과 취합
+→ LocalAnalysisClient가 analyze_message(body, input_type, subject) 직접 호출
+→ URL 후보를 재검증·중복 제거하고 최대 20개 선택
+→ 각 candidate["url"]에 대해 analyze_url(url) 직접 호출
+→ 모델 결과와 URL 후보 메타데이터 병합
+→ Web Search·File Search·LLM 사용자용 설명 취합
 → AnalysisResponse 검증
 → Streamlit 결과 렌더링
 ```
@@ -544,26 +541,23 @@ class MockAnalysisClient(AnalysisClient):
 
 ### 계층별 전달 형식
 
-같은 Python 프로세스에서 동작하므로 UI와 pipeline 사이는 JSON 문자열이 아닌 JSON 호환 Python `dict` 또는 dataclass를 사용한다. OpenAI Function Calling의 도구 인자와 결과는 JSON 스키마로 검증한다.
+같은 Python 프로세스에서 동작하므로 UI와 pipeline 사이는 JSON 문자열이 아닌 JSON 호환 Python `dict` 또는 dataclass를 사용한다. 로컬 모델의 입력과 결과는 `SafeMate_모델_UI_연동_요구사항.md`, UI가 사용하는 전체 요청과 응답은 `SafeMate_분석_통합_UI_공통계약.md`를 따른다.
 
 ```text
 Streamlit → pipeline
 구조화된 AnalysisRequest
 
+pipeline → 메시지 모델
+analyze_message(body, input_type, subject)
+
+pipeline → URL 모델
+선정된 각 candidate["url"]에 대해 analyze_url(url)
+
 pipeline → OpenAI Responses API
-AnalysisRequest + classify_message/analyze_urls 도구 스키마
+검증된 모델 결과를 바탕으로 Web/File Search와 사용자용 설명 생성
 
-OpenAI → pipeline
-function_call(name, arguments)
-
-pipeline → 로컬 모델
-검증된 명시적 Python 인자
-
-pipeline → OpenAI
-function_call_output(JSON 호환 모델 결과)
-
-OpenAI → pipeline
-Web/File Search를 포함한 최종 AnalysisResponse
+pipeline → Streamlit
+검증된 최종 AnalysisResponse
 ```
 
 다음과 같은 자유 형식 문자열을 ML 모델 호출 계약으로 사용하지 않는다.
@@ -595,18 +589,7 @@ def analyze_message(
 - 추론 시 `TfidfVectorizer.fit()` 또는 `fit_transform()`을 다시 실행하지 않는다.
 - SMS와 이메일을 하나의 모델로 처리할지 입력 유형별 모델로 라우팅할지는 모델팀이 결정하되 외부 함수 계약은 동일하게 유지한다.
 
-권장 반환 형식:
-
-```json
-{
-  "status": "success",
-  "label": "phishing",
-  "phishing_probability": 0.91,
-  "signals": ["개인정보 제출 요구"],
-  "model_version": "message-v1",
-  "error": null
-}
-```
+정식 반환 형식과 오류 규칙은 `SafeMate_모델_UI_연동_요구사항.md` 2절을 따른다. `top_features`는 설명값이 없더라도 빈 배열로 반환한다.
 
 ### URL 분석 모델 인터페이스
 
@@ -621,95 +604,21 @@ def analyze_url(url: str) -> dict:
 - pipeline은 URL별로 함수를 호출하고 하나의 실패가 다른 URL 분석을 중단하지 않도록 결과를 취합한다.
 - URL 분석 함수는 실제 URL에 네트워크 요청을 보내지 않는다.
 
-권장 반환 형식:
+정식 반환 형식과 오류 규칙은 `SafeMate_모델_UI_연동_요구사항.md` 3절을 따른다. `features`는 설명값이 없더라도 빈 배열로 반환하고, 반환된 `url`은 입력 문자열과 정확히 같아야 한다.
 
-```json
-{
-  "status": "success",
-  "url": "https://example.com",
-  "label": "suspicious",
-  "risk_score": 0.78,
-  "signals": ["로그인 유도 키워드"],
-  "model_version": "url-v1",
-  "error": null
-}
-```
+### 로컬 모델 직접 호출 계약
 
-### OpenAI Function Calling 도구 계약
-
-`classify_message` 도구:
-
-```json
-{
-  "type": "function",
-  "name": "classify_message",
-  "description": "SMS 또는 이메일 본문의 피싱 가능성을 분류합니다.",
-  "strict": true,
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "input_type": {
-        "type": "string",
-        "enum": ["sms", "email"]
-      },
-      "subject": {
-        "type": ["string", "null"]
-      },
-      "body": {
-        "type": "string"
-      }
-    },
-    "required": ["input_type", "subject", "body"],
-    "additionalProperties": false
-  }
-}
-```
-
-`analyze_urls` 도구:
-
-```json
-{
-  "type": "function",
-  "name": "analyze_urls",
-  "description": "추출된 URL 후보를 검증하고 URL별 위험도를 분석합니다.",
-  "strict": true,
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "url_candidates": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "url": {"type": "string"},
-            "source_type": {
-              "type": "string",
-              "enum": ["text", "href", "image_src"]
-            },
-            "input_index": {"type": "integer", "minimum": 0}
-          },
-          "required": ["url", "source_type", "input_index"],
-          "additionalProperties": false
-        }
-      }
-    },
-    "required": ["url_candidates"],
-    "additionalProperties": false
-  }
-}
-```
-
-Function Calling 실행 규칙:
-
-1. 도구 인자는 원본 `AnalysisRequest`와 대조하여 URL 추가·변조 여부를 차단한다.
-2. `classify_message`는 로컬 `analyze_message()`를 호출한다.
-3. `analyze_urls`는 `url_analyzer.py`에서 후보를 재검증·중복 제거·우선순위화한 뒤 최대 20개를 `analyze_url()`에 전달한다.
-4. 각 실행 결과는 JSON 직렬화 가능한 객체로 `function_call_output`에 반환한다.
-5. 도구 호출이 여러 개면 모두 처리한 후 최종 응답 생성을 요청한다.
+1. pipeline은 요청 검증 후 `analyze_message(body, input_type, subject)`를 직접 호출한다.
+2. pipeline은 URL 후보를 재검증·중복 제거·우선순위화한 뒤 최대 20개를 선택한다.
+3. 선택된 각 후보의 `candidate["url"]` 문자열만 `analyze_url(url)`에 전달한다.
+4. URL 후보의 위치·출처·표시 주소 메타데이터와 HTML 정적 검사 신호는 pipeline이 모델 결과에 병합한다.
+5. 모델 결과는 JSON 직렬화 가능해야 하며 임의의 특징값이나 기여도를 추가하지 않는다.
+6. 하나의 URL 모델 실패가 다른 URL 또는 메시지 분석을 중단시키지 않는다.
+7. OpenAI는 로컬 모델 호출을 결정하거나 모델 입력을 생성하지 않는다.
 
 ### OpenAI 전달 형식
 
-pipeline은 메시지 모델과 URL 모델의 구조화된 결과를 JSON 호환 객체로 OpenAI 서비스에 전달한다. 모델 결과를 임의의 자연어 목록으로 합쳐 유일한 계약으로 사용하지 않는다. Function Calling 결과, Web Search와 File Search 결과도 동일한 `AnalysisResponse` 스키마로 정규화한다.
+pipeline은 검증된 메시지·URL 모델 결과를 구조화된 JSON 호환 객체로 OpenAI 서비스에 전달한다. OpenAI는 Web Search·File Search 근거 취합과 `summary`, `risk_reasons`, `recommended_actions` 생성에만 사용하며, 모델 결과와 요청에 없던 의심 URL을 추가하거나 변경할 수 없다.
 
 ## 13. 요청 스키마
 
@@ -931,11 +840,11 @@ SMS와 이메일을 공통 `AnalysisRequest` 구조로 정규화한다. `subject
 - 공백 SMS와 10,000자 초과 SMS 거부
 - SMS URL 후보 추출, `[URL]` 치환과 출처 메타데이터 보존
 - 입력 유형 전환 시 기존 입력과 분석 결과 초기화
-- 문자·이메일 모델에 `text`, `input_type`, `subject`만 전달되는지 확인
-- URL 모델에 URL 문자열 하나씩 전달되는지 확인
-- `classify_message`·`analyze_urls` Function Calling 도구 스키마 검증
-- 도구 인자와 원본 `AnalysisRequest` 불일치 차단
-- 여러 Function Calling 결과의 `function_call_output` 반환
+- 문자·이메일 모델을 `text`, `input_type`, `subject` 인자로 직접 호출하는지 확인
+- URL 모델에 요청 후보의 URL 문자열을 하나씩 직접 전달하는지 확인
+- 모델 반환 URL과 입력 URL 불일치 차단
+- URL 후보 메타데이터와 HTML 정적 신호가 pipeline에서 병합되는지 확인
+- OpenAI가 로컬 모델 호출 여부나 모델 입력을 결정하지 않는지 확인
 - UI와 pipeline에서 TF-IDF 및 URL 모델 특징을 생성하지 않는지 확인
 - 정상 `.eml`과 멀티파트 이메일 파싱
 - `.EML` 대문자 확장자 허용
@@ -997,7 +906,7 @@ SMS와 이메일을 공통 `AnalysisRequest` 구조로 정규화한다. `subject
 - 공통 요청에는 입력 유형, 선택적 제목, `[URL]`로 치환한 본문과 출처 메타데이터가 포함된 URL 후보를 포함한다.
 - URL은 클릭 대상 링크를 우선하여 최초 등장 순서로 중복 제거하고 최대 20개까지 분석한다.
 - 초과한 URL 개수가 UI에 표시된다.
-- OpenAI Function Calling으로 로컬 모델을 호출하고 결과를 `function_call_output`으로 반환한다.
+- 분석 파이프라인이 메시지·URL 모델을 직접 호출하고, OpenAI는 검색 근거와 사용자용 설명 생성에만 사용한다.
 - TF-IDF와 URL 특징 추출은 각 모델 함수 내부에서 학습 때와 동일하게 수행한다.
 - Mock 응답으로 SMS와 이메일 결과 화면을 모두 시연할 수 있다.
 - 점수 의미와 배열 내부 스키마가 일관되게 적용된다.

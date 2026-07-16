@@ -38,8 +38,8 @@ Streamlit 화면·Matplotlib 시각화·분석 후 채팅 UI는 UI 담당자의 
 ### 처리
 
 - 요청 재검증(스키마 버전, 필수 값, 요청 불변 조건 준수 여부)
-- `analyze_message(body)` 직접 호출
-- `url_candidates` 각각에 대해 `analyze_url(candidate)` 직접 호출
+- `analyze_message(body, input_type, subject)` 직접 호출
+- `url_candidates` 각각의 `candidate["url"]`에 대해 `analyze_url(url)` 직접 호출
 - `url_analysis_summary` 집계(후보 수, 분석 완료 수, 제외 수, 실패 수)
 - Responses API의 `web_search`·`file_search` 도구로 근거 수집
 - 근거를 `web_evidence`·`file_evidence`로 정규화
@@ -63,9 +63,9 @@ AnalysisRequest
         ↓
 요청 재검증 (API-F-01)
         ↓
-analyze_message() 직접 호출 (API-F-02)
+analyze_message(body, input_type, subject) 직접 호출 (API-F-02)
         ↓
-url_candidates별 analyze_url() 직접 호출, url_analysis_summary 집계 (API-F-03)
+url_candidates별 analyze_url(candidate["url"]) 직접 호출, url_analysis_summary 집계 (API-F-03)
         ↓
 Responses API: web_search / file_search 도구 호출 (API-F-04)
         ↓
@@ -83,8 +83,8 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 | ID | 기능 | 상세 내용 | 완료 조건 |
 |---|---|---|---|
 | API-F-01 | 요청 검증 | `AnalysisRequest`의 `schema_version`, `input_type`, `body`의 `[URL]` 치환 여부, `url_candidates` 필수 필드를 재검증한다. | 유효하지 않은 요청은 처리를 중단하고 `INVALID_INPUT` 또는 `SCHEMA_VERSION_MISMATCH` 오류를 반환한다. |
-| API-F-02 | 메시지 분석 호출 | `analyze_message(body)`를 직접 호출한다. | 결과가 공통계약 6절 `message_analysis` 형식에 맞게 채워진다. |
-| API-F-03 | URL 분석 호출 | `url_candidates` 각 항목에 대해 `analyze_url(candidate)`를 직접 호출하고 `url_analysis_summary`를 집계한다. | 하나의 URL 실패가 다른 URL 결과나 `message_analysis`에 영향을 주지 않으며, `url_analysis_summary`의 네 값이 공통계약 7절 정의와 일치한다. |
+| API-F-02 | 메시지 분석 호출 | `analyze_message(body, input_type, subject)`를 직접 호출한다. | 결과가 공통계약 6절 `message_analysis` 형식에 맞게 채워진다. |
+| API-F-03 | URL 분석 호출 | `url_candidates` 각 항목의 `candidate["url"]`에 대해 `analyze_url(url)`을 직접 호출하고 후보 메타데이터와 모델 결과를 통합하여 `url_analysis_summary`를 집계한다. | 하나의 URL 실패가 다른 URL 결과나 `message_analysis`에 영향을 주지 않으며, `url_analysis_summary`의 네 값이 공통계약 7절 정의와 일치한다. |
 | API-F-04 | 근거 검색 | Responses API가 필요 시 `web_search`·`file_search` 도구를 호출하여 관련 공식 자료 및 최신 사례를 검색한다. | 검색 실패 시에도 이미 확보한 `message_analysis`·`url_analysis` 결과는 유지되며, Search 호출 여부는 GPT가 판단한다. |
 | API-F-05 | 근거 정규화 | 검색 결과를 `web_evidence`·`file_evidence` 형식으로 정규화한다. | API 기술명세서 6절 규칙에 따라 정규화되며, 의심 URL과 검색 근거 URL이 서로 섞이지 않는다. |
 | API-F-06 | 요약·근거 생성 | Responses API가 로컬 모델 결과와 검색 근거를 바탕으로 `summary`, `risk_reasons`, `recommended_actions`를 생성한다. | 생성된 결과가 `AnalysisResponse` 계약에 맞게 반환된다. |
@@ -103,19 +103,16 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 메시지, OpenAI API 응답 원문, 요청 원문, API 키는 `errors[].message`를 포함한 어떤 응답 필드에도
 포함하지 않는다(공통계약 4.3절, 10절).
 
-## 6. 모델팀 확인 체크리스트
+## 6. 모델팀 연동 기준
 
-`analyze_message`, `analyze_url` 함수의 정식 계약은 `SafeMate_모델_UI_연동_요구사항.md`에 있다. API
-기술명세서 8절에는 그 문서가 공유되기 전까지의 초안을 정리했으며, 아래 항목을 모델팀과 확인해
-확정해야 한다.
+`analyze_message`, `analyze_url` 함수의 정식 계약은 `SafeMate_모델_UI_연동_요구사항.md`에 있다. API는 다음 기준을 유지한다.
 
-- [ ] `SafeMate_모델_UI_연동_요구사항.md` 기준으로 API 초안(8절)과 실제 반환 필드·자료형이
-      일치하는가
-- [ ] `label` enum 값(메시지: `normal`/`phishing`/`unknown`, URL: `benign`/`suspicious`/`malicious`/
-      `unknown`)이 공통계약과 정확히 일치하는가
-- [ ] `top_features`·`features`가 항상 배열로 오는지(빈 배열 vs `null`)
-- [ ] 모델 실패 시 예외를 던지는지, `error` 필드로 실패를 알리는지
-- [ ] `model_version` 표기 규칙과 버전 변경 시 공지 절차
+- `analyze_message(body, input_type, subject)`를 호출한다.
+- `analyze_url(candidate["url"])`을 호출하고 URL 후보 메타데이터는 파이프라인에서 병합한다.
+- 메시지 `label`은 `normal`/`phishing`/`unknown`, URL `label`은 `benign`/`suspicious`/`malicious`/`unknown`을 사용한다.
+- `top_features`·`features`는 설명값이 없더라도 빈 배열로 반환한다.
+- 모델별 `error`는 성공 시 `null`, 실패 시 안전한 오류 객체를 사용한다.
+- 모든 결과에 `model_version`을 포함한다.
 
 ## 7. 완료 기준
 
@@ -125,5 +122,5 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 - File Search는 호출당 최대 5개의 관련 결과를 반환하고, Web Search는 필요 시 Responses API를 통해 호출되도록 구현한다.
 - 정상·부분(`partial`)·전체 실패(`error`) 3가지 상황에서 각각 예상되는 응답 형태를 UI 팀과 합의한다.
 - API 키, 내부 예외, OpenAI 응답 원문, 요청 원문이 노출되지 않는다.
-- 모델 함수 계약이 `SafeMate_모델_UI_연동_요구사항.md`와 일치하도록 최종 반영된다.
+- 모델 함수 호출과 결과 검증이 `SafeMate_모델_UI_연동_요구사항.md`와 일치한다.
 - Timeout(최대 60초), Retry(최대 2회) 정책이 API 구현에 반영된다.
