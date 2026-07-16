@@ -11,6 +11,7 @@ from src.analyzers.input_parser import (
     create_input_digest,
     prepare_sms_input,
 )
+from src.client_factory import get_analysis_client
 from src.config import MAX_SMS_CHARS
 from src.contracts import AnalysisRequestValidationError, build_analysis_request
 from src.services.openai_client import (
@@ -24,7 +25,6 @@ from src.ui.components import (
     render_data_notice,
     render_preview,
 )
-from src.ui.mock_client import MockAnalysisClient
 
 
 logger = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ if analyze_clicked and prepared_input is not None:
     try:
         request = build_analysis_request(prepared_input, request_id)
         with st.spinner("입력 내용을 분석하고 있습니다."):
-            result = MockAnalysisClient().analyze(request)
+            result = get_analysis_client().analyze(request)
         st.session_state.analysis_result = result
         st.session_state.analysis_status = result.get("status", "success")
         st.session_state.last_analyzed_digest = st.session_state.current_input_digest

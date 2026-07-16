@@ -1,0 +1,40 @@
+import unittest
+from unittest.mock import patch
+
+from src.client_factory import (
+    AnalysisBackendConfigurationError,
+    get_analysis_client,
+)
+from src.ui.mock_client import MockAnalysisClient
+
+
+class AnalysisClientFactoryTest(unittest.TestCase):
+    def test_defaults_to_mock_backend(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            client = get_analysis_client()
+
+        self.assertIsInstance(client, MockAnalysisClient)
+
+    def test_normalizes_configured_backend(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"SAFEMATE_ANALYSIS_BACKEND": "  MoCk  "},
+            clear=True,
+        ):
+            client = get_analysis_client()
+
+        self.assertIsInstance(client, MockAnalysisClient)
+
+    def test_rejects_unavailable_backend_without_fallback(self) -> None:
+        for backend in ("local", "api", ""):
+            with self.subTest(backend=backend), patch.dict(
+                "os.environ",
+                {"SAFEMATE_ANALYSIS_BACKEND": backend},
+                clear=True,
+            ):
+                with self.assertRaises(AnalysisBackendConfigurationError):
+                    get_analysis_client()
+
+
+if __name__ == "__main__":
+    unittest.main()
