@@ -75,15 +75,35 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
             ) from e
         return torch, nn
 
-    def _to_tensor(self, x, torch):
+    @staticmethod
+    def _prep(x):
+        # 희소행렬은 행 슬라이싱 가능한 CSR로 유지하고, 밀집 입력만 배열화한다.
+        # 전체 toarray()는 tfidf(수십만 차원 × 수백만 행)에서 OOM이라 금지.
         if hasattr(x, "toarray"):  # scipy sparse (tfidf)
-            x = x.toarray()
-        x = np.asarray(x, dtype=np.float32)
-        # 수백만 행에서 임시 배열을 아끼려고 복사 1회 + in-place 나눗셈
-        x = x - self._mean_
-        x /= self._std_
+            return x.tocsr()
+        return np.asarray(x, dtype=np.float32)
+
+    def _fit_stats(self, x):
+        if hasattr(x, "toarray"):
+            # 밀도화 없이 E[x²]-E[x]²로 열별 통계 계산
+            mean = np.asarray(x.mean(axis=0), dtype=np.float32).ravel()
+            mean_sq = np.asarray(
+                x.multiply(x).mean(axis=0), dtype=np.float32
+            ).ravel()
+            std = np.sqrt(np.maximum(mean_sq - mean ** 2, 0.0))
+        else:
+            mean = x.mean(axis=0)
+            std = x.std(axis=0)
+        std[std == 0] = 1.0
+        self._mean_, self._std_ = mean, std
+
+    def _batch_tensor(self, xb, torch):
+        # 배치 단위로만 밀도화 + 표준화
+        if hasattr(xb, "toarray"):
+            xb = xb.toarray().astype(np.float32, copy=False)
+        xb = (xb - self._mean_) / self._std_
         # (n, seq_len=d, input_size=1)
-        return torch.from_numpy(x).unsqueeze(-1)
+        return torch.from_numpy(xb).unsqueeze(-1)
 
     def _resolve_device(self, torch):
         if self.device == "auto":
@@ -98,14 +118,8 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
         dev = self._resolve_device(torch)
 
         self.classes_, y_idx = np.unique(y, return_inverse=True)
-        # asarray는 이미 float32면 복사하지 않는다 (수 GB 절약)
-        raw = (x.toarray() if hasattr(x, "toarray") else x)
-        raw = np.asarray(raw, dtype=np.float32)
-        self._mean_ = raw.mean(axis=0)
-        self._std_ = raw.std(axis=0)
-        self._std_[self._std_ == 0] = 1.0
-
-        xt = self._to_tensor(x, torch)
+        x = self._prep(x)
+        self._fit_stats(x)
         yt = torch.from_numpy(y_idx.astype(np.int64))
 
         lstm = nn.LSTM(
@@ -120,17 +134,18 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
 
         optimizer = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
         loss_fn = nn.CrossEntropyLoss()
-        dataset = torch.utils.data.TensorDataset(xt, yt)
+        # 전체 텐서 대신 인덱스만 섞고 배치를 그때그때 밀도화한다
         loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True,
+            torch.arange(x.shape[0]), batch_size=self.batch_size, shuffle=True,
             generator=torch.Generator().manual_seed(self.random_state),
         )
 
         self.model_.train()
         for _ in range(self.epochs):
-            for xb, yb in loader:
+            for bidx in loader:
+                xb = self._batch_tensor(x[bidx.numpy()], torch)
                 optimizer.zero_grad()
-                loss = loss_fn(self._forward(xb.to(dev)), yb.to(dev))
+                loss = loss_fn(self._forward(xb.to(dev)), yt[bidx].to(dev))
                 loss.backward()
                 optimizer.step()
         # 저장(pickle)·추론 호환성을 위해 학습 후 CPU로 이동
@@ -146,12 +161,12 @@ class LSTMClassifier(BaseEstimator, ClassifierMixin):
         # 수십 GB가 될 수 있어 반드시 배치로 나눠 추론한다
         torch, _ = self._torch()
         self.model_.eval()
-        xt = self._to_tensor(x, torch)
+        x = self._prep(x)
         outs = []
         with torch.no_grad():
-            for i in range(0, len(xt), batch_size):
-                logits = self._forward(xt[i:i + batch_size])
-                outs.append(torch.softmax(logits, dim=1))
+            for i in range(0, x.shape[0], batch_size):
+                xb = self._batch_tensor(x[i:i + batch_size], torch)
+                outs.append(torch.softmax(self._forward(xb), dim=1))
         return torch.cat(outs).numpy()
 
     def predict(self, x):

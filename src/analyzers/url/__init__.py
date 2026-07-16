@@ -17,6 +17,7 @@ from src.analyzers.url.features import (
     clean_url,
     extract_url_features,
     normalize_url,
+    reduce_tfidf_dimensions,
 )
 from src.analyzers.url.prediction import analyze_urls, predict_urls
 from src.analyzers.url.schemas import DataSet, ModelBundle
@@ -46,6 +47,7 @@ __all__ = [
     "clean_url",
     "extract_url_features",
     "normalize_url",
+    "reduce_tfidf_dimensions",
     "analyze_urls",
     "predict_urls",
     "DataSet",

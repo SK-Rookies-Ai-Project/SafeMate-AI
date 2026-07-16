@@ -20,15 +20,20 @@ All.csv의 관측된 규칙을 따른다:
 데이터(url_binary_dataset.csv)에서 이 모듈로 학습 데이터를 재생성할 것.
 """
 
+import logging
 import math
 import re
+import time
 from collections import Counter
 from typing import Iterable, Optional, Sequence
 
 from urllib.parse import urlparse
 
+import numpy as np
 import pandas as pd
+from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.pipeline import make_pipeline
 
 from src.analyzers.url.constants import (
     DELIMITERS,
@@ -37,6 +42,8 @@ from src.analyzers.url.constants import (
     SENSITIVE_WORDS,
     VOWELS,
 )
+
+log = logging.getLogger(__name__)
 
 _IP_PATTERN = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9]+")
@@ -445,3 +452,56 @@ def build_tfidf_vectorizer(**overrides) -> TfidfVectorizer:
     )
     params.update(overrides)
     return TfidfVectorizer(**params)
+
+
+def svd_transform_chunked(svd, x, chunk_rows: int = 1_000_000) -> np.ndarray:
+    """SVD transform을 청크로 나눠 float32로 수행.
+
+    한 번에 transform하면 float64 전체 행렬(수천만 행이면 수십 GB)이 생긴다.
+    """
+    out = np.empty((x.shape[0], svd.n_components), dtype=np.float32)
+    for i in range(0, x.shape[0], chunk_rows):
+        out[i:i + chunk_rows] = svd.transform(x[i:i + chunk_rows])
+    return out
+
+
+def reduce_tfidf_dimensions(
+    x_train,
+    x_test,
+    vectorizer,
+    n_components: int,
+    random_state: int = 42,
+    fit_rows: int = 2_000_000,
+):
+    """TF-IDF 희소행렬을 TruncatedSVD(LSA)로 저차원 밀집행렬(float32)로 축소.
+
+    (x_train_축소, x_test_축소, tfidf→svd Pipeline)을 반환한다. Pipeline은
+    ModelBundle.transform이 추론 시 vectorizer로 그대로 사용할 수 있다.
+    fit은 fit_rows 서브샘플로 수행한다 (전체 randomized SVD는 시간 대비
+    이득이 없음).
+    """
+    started = time.time()
+    svd = TruncatedSVD(n_components=n_components, random_state=random_state)
+    n_fit = min(fit_rows, x_train.shape[0])
+    log.info("svd fit 시작 (dims=%d, n=%s)", n_components, f"{n_fit:,}")
+    if x_train.shape[0] > n_fit:
+        idx = np.random.default_rng(random_state).choice(
+            x_train.shape[0], size=n_fit, replace=False
+        )
+        svd.fit(x_train[idx])
+    else:
+        svd.fit(x_train)
+    log.info(
+        "svd fit 완료: 분산보존 %.3f, %.0fs",
+        svd.explained_variance_ratio_.sum(),
+        time.time() - started,
+    )
+    x_train = svd_transform_chunked(svd, x_train)
+    x_test = svd_transform_chunked(svd, x_test)
+    log.info(
+        "svd transform 완료: train=%s test=%s, %.0fs",
+        x_train.shape,
+        x_test.shape,
+        time.time() - started,
+    )
+    return x_train, x_test, make_pipeline(vectorizer, svd)

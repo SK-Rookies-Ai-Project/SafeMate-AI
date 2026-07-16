@@ -122,6 +122,14 @@ def build_tfidf_matrices(urls_train, urls_test, args):
         x_test.shape,
         time.time() - started,
     )
+    if args.tfidf_svd_dims:
+        x_train, x_test, vectorizer = training.reduce_tfidf_dimensions(
+            x_train,
+            x_test,
+            vectorizer,
+            n_components=args.tfidf_svd_dims,
+            random_state=args.random_state,
+        )
     return x_train, x_test, vectorizer
 
 
@@ -258,6 +266,9 @@ def main():
                         default=[3, 5], metavar=("MIN_N", "MAX_N"))
     parser.add_argument("--tfidf-min-df", type=int, default=2)
     parser.add_argument("--tfidf-max-features", type=int, default=100_000)
+    parser.add_argument("--tfidf-svd-dims", type=int, default=None,
+                        help="TruncatedSVD로 축소할 차원 수 "
+                             "(LSTM 등 밀집 입력 모델용, 기본: 축소 안 함)")
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--log-file",
                         default=Path(__file__).with_suffix(".log"))

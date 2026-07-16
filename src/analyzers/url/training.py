@@ -24,7 +24,10 @@ from src.analyzers.url.datasets import (
     make_feature_dataset,
     make_tfidf_dataset,
 )
-from src.analyzers.url.features import build_tfidf_vectorizer
+from src.analyzers.url.features import (
+    build_tfidf_vectorizer,
+    reduce_tfidf_dimensions,
+)
 from src.analyzers.url.model_registry import (
     DEFAULT_PARAM_DISTRIBUTIONS,
     MODEL_FACTORIES,
