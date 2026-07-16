@@ -2,7 +2,7 @@
 
 사용:
     uv run scripts/predict_url_cli.py                 # 기본: url_char_model.joblib
-    uv run scripts/predict_url_cli.py models/url_feature_model.joblib
+    uv run scripts/predict_url_cli.py models/url_char_model.joblib
 
 빈 줄 또는 Ctrl-D(Ctrl-C)로 종료.
 """
