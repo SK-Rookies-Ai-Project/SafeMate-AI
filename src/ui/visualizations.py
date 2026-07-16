@@ -30,7 +30,21 @@ DANGER = "#EF4444"
 
 
 def _configure_korean_font() -> str:
+    preferred_names = (
+        "Malgun Gothic",
+        "Apple SD Gothic Neo",
+        "AppleGothic",
+        "NanumGothic",
+        "Noto Sans CJK KR",
+    )
+    installed_names = {font.name for font in font_manager.fontManager.ttflist}
+    for name in preferred_names:
+        if name in installed_names:
+            return name
+
+    windows_fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
     candidates = (
+        windows_fonts / "malgun.ttf",
         Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
         Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
         Path("/System/Library/Fonts/Supplemental/NotoSansGothic-Regular.ttf"),
