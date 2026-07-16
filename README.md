@@ -34,23 +34,6 @@ Vector Store ID가 설정되면 File Search가 함께 활성화됩니다.
 - Web Search와 UI의 클릭 가능한 공식 출처는 코드로 검수된 국내 공공기관 HTTPS 도메인과
   그 하위 도메인으로 제한됩니다.
 
-## 로컬 모델 배치와 버전 변경
-
-모델 바이너리는 Git에 올리지 않습니다. 외부 저장소에서 전달받은 파일을 `models/`에 수동으로
-복사하고, Git으로 관리되는 `models/manifest.json`의 `version`, `filename`, `sha256`,
-`serializer`를 실제 파일에 맞게 갱신합니다. 현재 지원하는 serializer는 `joblib`입니다.
-
-PowerShell에서 SHA-256은 다음과 같이 확인할 수 있습니다.
-
-```powershell
-(Get-FileHash models/message-v1.joblib -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash models/url-v1.joblib -Algorithm SHA256).Hash.ToLower()
-```
-
-manifest의 초기 `sha256` 값은 자리표시자이므로 실제 모델을 배치할 때 반드시 교체해야 합니다.
-앱은 모델을 역직렬화하기 전에 파일 경로와 SHA-256을 검증하며, 응답의 `model_version`에는
-manifest의 `version`을 사용합니다. 모델 파일과 manifest 변경은 같은 배포 단위로 적용합니다.
-
 ## 처리 단계
 
 1. 사용자가 문자 또는 이메일을 입력합니다.

@@ -1,18 +1,10 @@
 """Application and operational policy configuration."""
 
-from pathlib import Path
-
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 OPENAI_TIMEOUT_SECONDS = 60.0
 OPENAI_MAX_RETRIES = 2
 
 RISK_MEDIUM_THRESHOLD = 0.4
 RISK_HIGH_THRESHOLD = 0.7
-
-MODELS_DIR = PROJECT_ROOT / "models"
-MODEL_MANIFEST_PATH = MODELS_DIR / "manifest.json"
 
 MAX_SMS_CHARS = 10_000
 MAX_EML_SIZE_BYTES = 25 * 1024 * 1024

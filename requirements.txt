@@ -3,7 +3,6 @@ openai
 matplotlib
 pandas
 scikit-learn
-joblib
 python-dotenv
 pypdf
 python-docx

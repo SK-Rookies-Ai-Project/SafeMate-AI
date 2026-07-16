@@ -112,8 +112,7 @@ AnalysisResponse 검증 후 반환 (API-F-08)
 - 메시지 `label`은 `normal`/`phishing`/`unknown`, URL `label`은 `benign`/`suspicious`/`malicious`/`unknown`을 사용한다.
 - `top_features`·`features`는 설명값이 없더라도 빈 배열로 반환한다.
 - 모델별 `error`는 성공 시 `null`, 실패 시 안전한 오류 객체를 사용한다.
-- 모든 결과의 `model_version`은 Git으로 관리되는 모델 manifest의 `version`을 사용하고,
-  모델 파일과 manifest 변경을 같은 배포 단위로 적용한다.
+- 모든 결과의 `model_version`은 실제 추론에 사용한 모델 또는 모델 파일 버전을 사용한다.
 
 ## 7. 완료 기준
 

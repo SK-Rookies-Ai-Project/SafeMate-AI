@@ -326,9 +326,6 @@ def analyze_url(url: str) -> dict:
   `url_analysis[].risk_score`의 최댓값으로 산출한다. 숫자가 아니거나, 유한하지 않거나,
   `0.0~1.0` 범위를 벗어난 값은 제외한다. 유효한 점수가 없으면 `score: null`, `level: unknown`이다.
 - 위험 단계는 `[0.0, 0.4)`를 `low`, `[0.4, 0.7)`를 `medium`, `[0.7, 1.0]`을 `high`로 판정한다.
-- 로컬 모델 파일은 Git에서 제외하고 `models/`에 수동 배치한다. `models/manifest.json`에는 모델별
-  `version`, `filename`, `sha256`, `serializer`를 기록한다. 로딩 전에 경로와 SHA-256을 검증하고,
-  검증 또는 역직렬화 실패 시 해당 모델 분석 실패로 처리하며 대체 모델을 임의 사용하지 않는다.
 - Web Search와 UI 링크 검증은 `src/services/web_search.py`의 동일한 고정 allowlist를 사용한다.
   허용 대상은 11개 국내 공공기관 도메인의 HTTPS 기본 포트 및 정상 하위 도메인뿐이며,
   환경변수로 목록을 확장하지 않는다.
