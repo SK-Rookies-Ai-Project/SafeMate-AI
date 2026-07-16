@@ -29,10 +29,12 @@ def test_joblib_model_files_load_as_model_bundle(model_path):
 
     bundle = ModelBundle.load(model_path)
 
-    assert bundle.kind in {"feature", "tfidf"}
+    assert bundle.kind in {"feature", "tfidf", "char"}
     assert bundle.model_type
     if bundle.kind == "feature":
         assert bundle.feature_names
+    else:
+        assert bundle.vectorizer is not None
 
 
 @pytest.mark.parametrize("model_path", MODEL_FILES, ids=lambda p: p.name)
