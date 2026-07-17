@@ -24,7 +24,7 @@ models/*.pkl
 models/*.sqlite3
 outputs/
 logs/
-scripts/*.log
+.safemate-attestations/
 
 # Datasets (대용량 학습 데이터)
 data/url/
@@ -36,9 +36,11 @@ Thumbs.db
 .vscode/
 .idea/
 
-# DataSet Folder
-data/
-.joblib
-
-#log
+# Data files are ignored except the reviewed corpus manifest and placeholder.
+data/*
+!data/knowledge_base/
+data/knowledge_base/*
+!data/knowledge_base/.gitkeep
+!data/knowledge_base/manifest.json
+# Logs
 *.log

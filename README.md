@@ -15,7 +15,7 @@ Streamlit UI의 1차 분석은 저장소에 포함된 로컬 문자·이메일·
 - 로컬 문자·이메일·URL 모델 분석과 종합 주의 수준 계산
 - 위험 이유, 즉시 대응 방법과 분석 한계 표시
 - Matplotlib 기반 메시지 통합 점수와 URL 특징 시각화
-- 1차 분석 완료 후 OpenAI 기반 보안 비서 후속 채팅
+- 1차 분석 완료 후, 기본 비활성화된 OpenAI 보안 비서 후속 대화
 
 ## UI 화면 미리보기
 
@@ -33,7 +33,7 @@ Streamlit UI의 1차 분석은 저장소에 포함된 로컬 문자·이메일·
 
 ![SafeMate AI 분석 후 보안 비서 채팅](docs/images/safemate-followup-chat.png)
 
-후속 채팅은 1차 분석 결과를 바꾸지 않고 대응 방법을 설명하는 별도 단계입니다. 답변 생성에는 유효한 OpenAI API 설정과 네트워크 연결이 필요합니다.
+후속 대화는 1차 분석 결과를 바꾸지 않는 선택적 단계입니다. `SAFEMATE_OPENAI_FOLLOWUP_ENABLED`가 기본값인 비활성 상태이거나 OpenAI 설정·필수 신뢰 검증이 준비되지 않으면 대화와 외부 검색은 제공하지 않으며, 로컬 1차 분석은 계속 사용할 수 있습니다.
 
 ## 처리 흐름
 
@@ -73,30 +73,50 @@ streamlit run app.py
 저장소 루트에 Git에서 제외되는 `.env` 파일을 만들고 필요한 값을 설정합니다.
 
 ```env
+# 기본값 false. 1|true|yes|on(대소문자 무관)일 때만 후속 기능을 요청합니다.
+SAFEMATE_OPENAI_FOLLOWUP_ENABLED=false
 OPENAI_API_KEY=
 OPENAI_MODEL=
 OPENAI_VECTOR_STORE_ID=
+OPENAI_VECTOR_INVENTORY_ATTESTATION_PATH=
+OPENAI_VECTOR_INVENTORY_ATTESTATION_SHA256=
+OPENAI_PROVIDER_CONTRACT_ATTESTATION_PATH=
+OPENAI_PROVIDER_CONTRACT_ATTESTATION_SHA256=
+OPENAI_SDK_VERSION=
 SAFEMATE_URL_MODEL_PATH=
 SAFEMATE_URL_MODEL_KIND=char
 ```
 
 | 변수 | 설명 |
 |---|---|
-| `OPENAI_API_KEY` | 분석 후 보안 비서 채팅에서 사용할 OpenAI API 키입니다. 저장소에 커밋하지 마세요. |
-| `OPENAI_MODEL` | 후속 채팅에 사용할 OpenAI 모델 이름입니다. |
-| `OPENAI_VECTOR_STORE_ID` | 선택 항목입니다. 설정하면 등록된 보안 문서 검색을 후속 채팅에 사용할 수 있습니다. |
+| `SAFEMATE_OPENAI_FOLLOWUP_ENABLED` | OpenAI 후속 기능의 명시적 opt-in 스위치입니다. 비어 있거나 허용값 외 값이면 비활성화합니다. |
+| `OPENAI_API_KEY` | 활성화된 후속 대화에서만 사용할 OpenAI API 키입니다. 저장소에 커밋하지 마세요. |
+| `OPENAI_MODEL` | 단일 보안 비서 페르소나의 후속 대화 모델 식별자입니다. |
+| `OPENAI_VECTOR_STORE_ID` | File Search를 호출하기 전에 검증된 inventory의 store ID와 **정확히 일치**해야 하는 선택 항목입니다. 불일치·누락 시 File Search를 사용하지 않습니다. |
+| `OPENAI_VECTOR_INVENTORY_ATTESTATION_PATH` / `OPENAI_VECTOR_INVENTORY_ATTESTATION_SHA256` | private provider ID를 포함하는 deployment-controlled Vector inventory artifact 경로와 integrity anchor입니다. 누락·불일치 시 File Search를 사용하지 않습니다. |
+| `OPENAI_PROVIDER_CONTRACT_ATTESTATION_PATH` / `OPENAI_PROVIDER_CONTRACT_ATTESTATION_SHA256` | hosted Responses 호출을 허용하기 위한 deployment-controlled provider contract artifact 경로와 integrity anchor입니다. 누락·불일치 시 Responses 호출을 전혀 만들지 않습니다. |
+| `OPENAI_SDK_VERSION` | provider contract와 일치해야 하는 OpenAI SDK 버전입니다. |
 | `SAFEMATE_URL_MODEL_PATH` | 선택 항목입니다. 비어 있으면 저장소에 포함된 기본 URL 모델을 사용합니다. |
 | `SAFEMATE_URL_MODEL_KIND` | URL 모델 종류입니다. 기본값은 현재 모델 산출물에 맞는 `char`입니다. |
 
-1차 분석은 별도 백엔드 선택 없이 저장소의 로컬 문자·이메일·URL 모델을 직접 사용합니다. `OPENAI_VECTOR_STORE_ID`가 비어 있으면 후속 채팅의 File Search는 사용하지 않습니다.
+1차 분석은 `get_analysis_client()`가 구성하는 `LocalAnalysisClient`가 기존 로컬 문자·이메일·URL 모델과 응답 계약을 그대로 결합해 수행합니다. 이 경로는 후보를 중복 제거·우선순위화하고 최대 20개를 선택한 뒤, 상속한 URL adapter를 통해 `url_analyzer.analyze_url()`을 호출합니다. 현재 primary `AnalysisResponse`는 `success|error`만 반환하고 호환성 슬롯 `web_evidence`·`file_evidence`는 항상 빈 배열입니다. hosted action plan·citation은 별도 `FollowupResponse`만 전달할 수 있으며, 후속 흐름은 primary score·label·threshold·status를 변경하지 않습니다.
+
+## 후속 보안 비서 운영 경계
+
+후속 기능은 **한 명의 보안 비서 페르소나**가 수행하는 제한된 두 번의 OpenAI Responses 호출이다. Agents SDK, handoff, 복수 assistant, Agent Orchestrator를 사용하거나 계획하지 않는다. 1차 모델·라벨·점수·임계값은 이 흐름으로 변경되지 않는다.
+
+1. 첫 호출은 `build_security_action_plan` 사용자 정의 Function Calling을 반드시 한 번 수행한다. 호스트는 검증된 `{request_id, risk_level}`만으로 I/O 없는 결정론적 대응 계획을 만들고 직접 렌더링한다.
+2. 두 번째 호출은 첫 호출의 허용된 불투명 암호화 추론 항목과 function 결과를 순서대로 재생한 뒤에만 수행한다. OpenAI 호스팅 공식 도메인 Web Search와 준비·출처 검증된 File Search만 선택적으로 제공하며, 보조 설명과 인용만 반환할 수 있다.
+3. 두 호출 모두 `store=False`를 사용하고 `previous_response_id`나 제공자 응답·파일·스토어 ID를 저장하지 않는다. 인용의 URL·파일·출처 결속 검증이 하나라도 실패하면 생성된 보조 주장과 인용을 모두 폐기하고 대응 계획만 표시한다.
+
+운영자는 corpus manifest·Vector inventory·provider contract artifact와 configured digest의 custody 및 rotation을 책임진다. configured digest는 배포가 통제하는 integrity anchor일 뿐, 손상된 런타임에 대한 암호학적 증명은 아니다. provider trust가 실패하면 Responses 호출을 전혀 만들지 않는다. provider trust가 성공한 뒤 manifest·inventory·readiness·provenance 또는 `OPENAI_VECTOR_STORE_ID`의 verified store-ID exact match가 실패하면 File Search만 fail-closed하고 Web-only fallback은 허용한다. live provider 검증은 `--run-openai-integration`, `RUN_OPENAI_INTEGRATION=1`, `OPENAI_INTEGRATION_COST_ACK=YES`가 모두 필요한 비용 게이트이며 CI에서는 `OPENAI_INTEGRATION_TRUSTED_RUNNER=1`도 추가로 필요하다. 세부 운영 정책은 API 기술명세서 9.3절이 정본이다.
 
 ## 운영 정책
-
-- OpenAI API는 호출 시도당 60초 타임아웃을 적용하고, 일시적 오류에 한해 최대 2회 재시도합니다.
-- 종합 위험 점수는 유효한 메시지 피싱 확률과 URL 위험 점수 중 최댓값입니다.
-- `0.4` 미만은 `low`, `0.4` 이상 `0.7` 미만은 `medium`, `0.7` 이상은 `high`입니다.
-- Web Search와 클릭 가능한 공식 출처는 코드로 검수된 국내 공공기관 HTTPS 도메인과 그 하위 도메인으로 제한합니다.
-
+- OpenAI 후속 호출은 활성화·자격 증명·모델·attestation 전제조건이 모두 충족될 때만 시도하며, 재시도 없이 호출당 최대 20초, readiness 확인당 최대 5초, 사용자 턴 총 45초의 상한을 적용한다.
+- 후속 호출은 최대 두 번, 호스팅 도구 호출은 최대 다섯 번으로 제한한다. 기본 경로와 일반 테스트는 외부 호출·비용을 발생시키지 않는다.
+- 종합 위험 점수는 유효한 메시지 피싱 확률과 URL 위험 점수 중 최댓값이다.
+- `0.4` 미만은 `low`, `0.4` 이상 `0.7` 미만은 `medium`, `0.7` 이상은 `high`이다.
+- Web Search는 OpenAI 호스팅 도구가 반환한 공식 HTTPS 도메인 근거만 엄격히 결속·검증해 표시한다.
 ## 문자 메시지와 이메일 사용 방법
 
 ### 문자 메시지
@@ -128,7 +148,7 @@ SAFEMATE_URL_MODEL_KIND=char
 | 표시 URL과 실제 연결 URL 불일치 탐지 | 구현 | 이메일 HTML 링크의 도메인 비교 |
 | 1차 분석 | 구현 | 로컬 문자·이메일·URL 모델을 직접 호출 |
 | Matplotlib 시각화 | 구현 | 메시지 통합 점수와 URL 특징 시각화 |
-| 분석 후 보안 비서 채팅 | 구현 | OpenAI 설정과 네트워크 필요 |
+| 분석 후 보안 비서 채팅 | 구현(기본 비활성) | 전제조건 충족 시에만 한 페르소나·두 호출 경계로 제공 |
 | 로컬 메시지·URL 모델 연결 | 구현 | `LocalAnalysisClient`가 공통 응답 계약으로 통합 |
 
 모델 파일은 `models/`에 배치하며 URL 모델 경로와 종류는 선택적 환경변수로 재정의할 수 있습니다.
