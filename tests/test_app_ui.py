@@ -51,6 +51,14 @@ def _render_empty_evidence() -> None:
 
 
 class AppChatUiTest(unittest.TestCase):
+    def test_analysis_button_stays_visibly_enabled_without_input(self) -> None:
+        app = AppTest.from_file("app.py").run(timeout=10)
+
+        self.assertFalse(app.button[0].disabled)
+        app.button[0].click().run(timeout=10)
+
+        self.assertEqual(app.warning[0].value, "분석할 문자 내용을 입력해 주세요.")
+        self.assertEqual(len(app.exception), 0)
     def test_shows_clickable_suggestions_only_after_analysis(self) -> None:
         app = AppTest.from_file("app.py").run(timeout=10)
         self.assertEqual(len(app.chat_input), 0)

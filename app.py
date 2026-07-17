@@ -240,13 +240,19 @@ analyze_clicked = left.button(
     "분석 시작",
     type="primary",
     use_container_width=True,
-    disabled=prepared_input is None or input_error is not None,
 )
 right.button(
     "초기화",
     use_container_width=True,
     on_click=reset_all,
 )
+
+if analyze_clicked and prepared_input is None and input_error is None:
+    st.warning(
+        "분석할 문자 내용을 입력해 주세요."
+        if st.session_state.input_type == "sms"
+        else "분석할 이메일 파일을 선택해 주세요."
+    )
 
 if analyze_clicked and prepared_input is not None:
     request_id = f"analysis-{uuid4().hex[:12]}"
