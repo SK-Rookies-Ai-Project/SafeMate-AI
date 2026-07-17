@@ -22,6 +22,21 @@ RISK_LABELS = {
     "high": "높은 주의",
     "unknown": "판단 불가",
 }
+DEFAULT_OFFICIAL_RESOURCES = (
+    {
+        "title": "보호나라",
+        "organization": "한국인터넷진흥원(KISA)",
+        "description": "피싱·스미싱 예방 정보와 침해사고 상담 안내를 확인할 수 있습니다.",
+        "url": "https://www.boho.or.kr/",
+    },
+    {
+        "title": "사이버범죄 신고시스템(ECRM)",
+        "organization": "경찰청",
+        "description": "사이버사기 피해를 온라인으로 신고하거나 신고 절차를 확인할 수 있습니다.",
+        "url": "https://ecrm.police.go.kr/minwon/main",
+    },
+)
+
 
 
 def build_chat_suggestions(result: dict) -> list[str]:
@@ -126,7 +141,10 @@ def render_analysis_result(result: dict) -> None:
     )
 
     with message_tab:
-        _render_message_analysis(result.get("message_analysis", {}))
+        _render_message_analysis(
+            result.get("message_analysis", {}),
+            input_type=result.get("input_type", "sms"),
+        )
     with url_tab:
         _render_url_analysis(result)
     with evidence_tab:
@@ -135,10 +153,26 @@ def render_analysis_result(result: dict) -> None:
         _render_limitations(result)
 
 
-def _render_message_analysis(analysis: dict) -> None:
+def _render_message_analysis(analysis: dict, input_type: str = "sms") -> None:
     if not analysis:
         st.info("메시지 분석 결과가 없습니다.")
         return
+    status = analysis.get("status")
+    if status == "error":
+        error = analysis.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        st.error(
+            message
+            if isinstance(message, str) and message
+            else "메시지 분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요."
+        )
+        st.text(f"분류: {analysis.get('label', 'unknown')}")
+        st.text(f"모델 버전: {analysis.get('model_version', 'unknown')}")
+        return
+    if status != "success":
+        st.info("메시지 분석 결과를 현재 표시할 수 없습니다.")
+        return
+
     label = analysis.get("label", "unknown")
     display_label = {
         "normal": "정상",
@@ -155,9 +189,12 @@ def _render_message_analysis(analysis: dict) -> None:
         "광고성 스팸, 사기, 피싱을 포함한 통합 분류 결과이며 "
         "피싱만의 확률을 의미하지 않습니다."
     )
-    probability_chart = create_message_probability_chart(analysis)
+    probability_chart = create_message_probability_chart(
+        analysis,
+        input_type=input_type,
+    )
     if probability_chart is not None:
-        st.pyplot(probability_chart, clear_figure=True)
+        st.pyplot(probability_chart, clear_figure=True, width="content")
 
     signals = analysis.get("signals", [])
     if signals:
@@ -166,7 +203,7 @@ def _render_message_analysis(analysis: dict) -> None:
     top_features = analysis.get("top_features", [])
     feature_chart = create_message_feature_chart(top_features)
     if feature_chart is not None:
-        st.pyplot(feature_chart, clear_figure=True)
+        st.pyplot(feature_chart, clear_figure=True, width="content")
     elif "top_features" in analysis:
         st.caption("현재 모델에서는 단어별 기여도를 제공하지 않습니다.")
     st.text(f"모델 버전: {analysis.get('model_version', 'unknown')}")
@@ -187,7 +224,7 @@ def _render_url_analysis(result: dict) -> None:
 
     risk_chart = create_url_risk_chart(analyses)
     if risk_chart is not None:
-        st.pyplot(risk_chart, clear_figure=True)
+        st.pyplot(risk_chart, clear_figure=True, width="content")
 
     for analysis in analyses:
         with st.container(border=True):
@@ -211,9 +248,9 @@ def _render_url_analysis(result: dict) -> None:
             feature_chart = create_url_feature_chart(features)
             contribution_chart = create_url_contribution_chart(features)
             if feature_chart is not None:
-                st.pyplot(feature_chart, clear_figure=True)
+                st.pyplot(feature_chart, clear_figure=True, width="content")
             if contribution_chart is not None:
-                st.pyplot(contribution_chart, clear_figure=True)
+                st.pyplot(contribution_chart, clear_figure=True, width="content")
             elif features:
                 st.caption("현재 모델에서는 URL 특징별 기여도를 제공하지 않습니다.")
 
@@ -222,7 +259,17 @@ def _render_evidence(result: dict) -> None:
     web_evidence = result.get("web_evidence", [])
     file_evidence = result.get("file_evidence", [])
     if not web_evidence and not file_evidence:
-        st.info("현재 표시할 공식 출처가 없습니다.")
+        st.info(
+            "이번 분석은 로컬 모델로 수행되어 분석 결과에 직접 인용된 "
+            "공식 출처는 없습니다."
+        )
+        st.markdown("#### 공식 확인·신고 채널")
+        for resource in DEFAULT_OFFICIAL_RESOURCES:
+            with st.container(border=True):
+                st.text(resource["title"])
+                st.text(resource["organization"])
+                st.caption(resource["description"])
+                st.link_button("공식 사이트 열기", resource["url"])
         return
 
     if web_evidence:

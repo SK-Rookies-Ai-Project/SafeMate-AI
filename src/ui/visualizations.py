@@ -63,7 +63,10 @@ matplotlib.rcParams["font.family"] = _configure_korean_font()
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 
-def create_message_probability_chart(analysis: dict) -> Figure | None:
+def create_message_probability_chart(
+    analysis: dict,
+    input_type: str = "sms",
+) -> Figure | None:
     """Visualize the model's combined spam and scam score."""
     probability = _unit_interval(analysis.get("phishing_probability"))
     if probability is None:
@@ -75,8 +78,14 @@ def create_message_probability_chart(analysis: dict) -> Figure | None:
         [probability],
         color=DANGER,
         height=0.3,
+        alpha=0.9,
     )
-    _format_percentage_axis(axis, "메시지 분류 결과")
+    title = (
+        "이메일 모델 반환값"
+        if input_type == "email"
+        else "문자 모델 반환값"
+    )
+    _format_percentage_axis(axis, title)
     _label_bars(axis, bars, [probability])
     return _finish(figure)
 
@@ -137,18 +146,24 @@ def _horizontal_feature_chart(
     color: str,
 ) -> Figure:
     labels, values = zip(*rows, strict=True)
-    figure, axis = _new_chart(height=max(2.8, 0.52 * len(rows) + 1.4))
-    bars = axis.barh(labels, values, color=color, height=0.58)
+    figure, axis = _new_chart(height=max(1.9, 0.42 * len(rows) + 1.1))
+    bars = axis.barh(
+        labels,
+        values,
+        color=color,
+        height=0.36,
+        alpha=0.9,
+    )
     _format_percentage_axis(axis, title)
     _label_bars(axis, bars, list(values))
     return _finish(figure)
 
 
 def _new_chart(*, height: float) -> tuple[Figure, object]:
-    figure = Figure(figsize=(8, height), facecolor=BACKGROUND)
+    figure = Figure(figsize=(6.4, height), facecolor=BACKGROUND)
     axis = figure.subplots()
     axis.set_facecolor(BACKGROUND)
-    axis.tick_params(colors=TEXT, labelsize=10)
+    axis.tick_params(colors=TEXT, labelsize=9)
     for spine in axis.spines.values():
         spine.set_visible(False)
     return figure, axis
@@ -158,7 +173,7 @@ def _format_percentage_axis(axis: object, title: str) -> None:
     axis.set_xlim(0, 1.08)
     axis.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
     axis.set_xticklabels(["0%", "25%", "50%", "75%", "100%"], color=MUTED)
-    axis.set_title(title, color=TEXT, fontsize=13, fontweight="bold", pad=12)
+    axis.set_title(title, color=TEXT, fontsize=12, fontweight="semibold", pad=8)
     axis.grid(axis="x", color=GRID, alpha=0.5, linewidth=0.8)
     axis.set_axisbelow(True)
 
@@ -171,12 +186,12 @@ def _label_bars(axis: object, bars: object, values: list[float]) -> None:
             f"{value:.0%}",
             va="center",
             color=TEXT,
-            fontsize=10,
+            fontsize=9,
         )
 
 
 def _finish(figure: Figure) -> Figure:
-    figure.tight_layout(pad=1.2)
+    figure.tight_layout(pad=0.8)
     return figure
 
 
