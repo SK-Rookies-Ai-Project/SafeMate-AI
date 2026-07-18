@@ -39,20 +39,21 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 - 이메일은 디코딩된 일반 텍스트 정규식과 HTML `href`·외부 이미지 `src`에서 URL 후보 추출
 - 본문 URL을 `[URL]`로 치환하고 공통 `AnalysisRequest` 생성
 
-### 로컬 분석 클라이언트 담당
-- `get_analysis_client()`가 만든 `LocalAnalysisClient`가 1차 요청을 재검증하고 고정 로컬 `analyze_message`를 호출하며, URL 후보는 중복 제거·우선순위화·상한 적용 후 상속 URL adapter를 통해 `url_analyzer.analyze_url`로 전달
-- 로컬 결과로 종합 위험도와 1차 응답을 구성; 후속 대화가 이를 변경하지 않음
-- 후속 질문에서 capability 전제조건이 충족된 경우에만 한 보안 비서 페르소나의 제한된 두-call Responses 흐름을 요청
-- 첫 call의 `build_security_action_plan` 결과는 호스트가 결정론적으로 표시
-- 두 번째 call의 OpenAI 호스팅 공식-domain Web Search 및 attested·ready File Search 근거만 엄격히 승인
-- 인용 검증 실패·후속 오류 시 보조 답변을 버리고 action plan 또는 사용 불가 안내를 표시
+### API 서비스 담당
+
+- `input_type`, 제목, 필터링된 본문과 URL 후보 재검증
+- `analyze_message(body, input_type, subject)` 직접 호출
+- URL 재검증·중복 제거·우선순위 적용·최대 개수 제한
+- 선정된 각 URL 문자열에 대해 `analyze_url(url)` 직접 호출
+- 모델 결과와 URL 후보 메타데이터 통합
+- Web Search·File Search 실행
+- 모델 결과와 검색 근거를 바탕으로 LLM 사용자용 설명 생성
 
 ### 데이터 처리 원칙
-- 현재 primary `AnalysisResponse`는 local-only이며 `status=success|error`만 표시한다. `web_evidence`·`file_evidence` 호환성 슬롯은 유지되지만 `LocalAnalysisClient`가 항상 빈 배열로 반환한다. `partial`은 향후 공통계약 capability다.
-- hosted action plan·Web/File evidence는 별도 `FollowupResponse`의 보조 정보로만 표시하며 primary 결과를 변경하지 않는다.
-- provider trust가 실패하면 UI는 Responses 호출 없이 사용 불가 안내와 로컬 결과만 표시한다. provider trust 뒤 File gate가 실패하면 File evidence만 숨기고 Web-only follow-up은 표시할 수 있다.
-- trust·store identity·digest custody·live gate·max/threshold의 정본은 API 기술명세서 9.3절이다. UI는 그 결과로 관찰되는 사용 가능 여부와 승인된 evidence만 표시한다.
+
+- 입력한 SMS와 업로드 이메일 내용은 분석 과정에서 OpenAI API로 전송될 수 있음을 분석 전에 안내한다.
 - 실제 개인정보, 비밀번호, 계좌정보 등 민감정보가 포함된 문자나 이메일은 입력하지 않도록 안내한다.
+- 시연과 테스트에는 합성 또는 개인정보가 제거된 SMS·이메일 샘플만 사용한다.
 - 입력한 SMS, 업로드 파일과 분석 결과는 영구 저장하지 않는다.
 
 ## 3. 대표 사용자
@@ -71,7 +72,7 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 2. URL을 포함한 문자 원문을 그대로 붙여넣는다.
 3. UI에서 문자 원문과 추출 URL을 확인한다.
 4. 사용자가 `분석 시작` 버튼을 누른다.
-5. UI가 `input_type: "sms"`, `subject: null`, 필터링된 본문과 URL 후보를 `get_analysis_client()`가 구성한 `LocalAnalysisClient`에 전달한다.
+5. UI가 `input_type: "sms"`, `subject: null`, 필터링된 본문과 URL 후보를 분석 파이프라인에 전달한다.
 6. 사용자가 종합 위험 수준, 위험 근거와 대응 방법을 확인한다.
 
 ### 시나리오 B: 가짜 채용 이메일 분석
@@ -80,7 +81,7 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 2. 채용 안내 `.eml` 파일을 업로드한다.
 3. UI에서 발신자·제목·본문·추출 URL을 확인한다.
 4. 사용자가 `분석 시작` 버튼을 누른다.
-5. UI가 `input_type: "email"`, 제목, 필터링된 본문과 URL 후보를 `get_analysis_client()`가 구성한 `LocalAnalysisClient`에 전달한다.
+5. UI가 `input_type: "email"`, 제목, 필터링된 본문과 URL 후보를 분석 파이프라인에 전달한다.
 6. 사용자가 이메일·URL·출처별 상세 결과를 확인한다.
 
 ### 시나리오 C: 정상 문자·이메일 분석
@@ -91,13 +92,12 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 
 ### 시나리오 D: 분석 후 보안 비서 대화
 
-1. 사용자가 로컬 1차 분석을 완료한다.
-2. UI는 provider trust가 성립한 경우에만 후속 입력을 표시한다. trust가 실패하면 Responses 호출 없이 로컬 결과와 사용 불가 사유를 유지하며, File gate만 실패하면 Web-only 후속은 가능하다.
+1. 사용자가 문자 또는 이메일의 1차 분석을 완료한다.
+2. UI가 확정된 분석 결과 아래에 후속 채팅을 표시한다.
 3. 사용자가 대응 방법이나 최신 위협 사례를 질문한다.
-4. 한 보안 비서 페르소나가 첫 Responses call에서 필수 `build_security_action_plan` Function Calling을 수행하고 호스트가 대응 계획을 표시한다.
-5. 정확한 replay 뒤의 두 번째 call만 공식-domain Web Search를 사용할 수 있다. File Search는 manifest·inventory·readiness·provenance와 `OPENAI_VECTOR_STORE_ID`의 verified store-ID exact match가 모두 유효할 때만 추가한다.
-6. 인용 결속 검증에 실패하면 UI는 보조 주장·인용을 표시하지 않고 대응 계획과 한계만 표시한다.
-7. 입력 변경, 재분석 또는 초기화 시 이전 대화는 제거된다.
+4. LLM은 원문을 재분류하지 않고 분석 결과 스냅샷을 근거로 답한다.
+5. 필요한 경우 File Search로 등록된 보안 지침을, Web Search로 최신 자료를 확인한다.
+6. 입력 변경, 재분석 또는 초기화 시 이전 대화는 제거된다.
 
 ## 5. 화면 구성
 
@@ -123,7 +123,7 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 [왜 의심스러운가요?]
 [지금 무엇을 해야 하나요?]
 
-[문자·이메일 분석 | URL 분석 | 공식 출처(후속 DTO) | 분석 한계]
+[문자·이메일 분석 | URL 분석 | 공식 출처 | 분석 한계]
 ```
 
 ## 6. 기능 요구사항
@@ -140,7 +140,7 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 | UI-F-08 | 입력 미리보기 | SMS 원문 또는 이메일 발신자·제목·본문을 표시한다. | 분석 전에 사용자가 입력 내용을 확인할 수 있다. |
 | UI-F-09 | URL 후보 추출 | SMS 텍스트, 이메일 텍스트와 HTML에서 URL 후보를 추출한다. | 외부 리소스를 로드하지 않고 출처 유형이 포함된 URL 후보 목록을 생성한다. |
 | UI-F-10 | URL 목록 표시 | 추출 URL을 본문·링크·이미지 출처로 구분한다. | URL은 클릭 불가능하며 분석 제외 개수가 있으면 함께 안내한다. |
-| UI-F-11 | 분석 요청 | 공통 `AnalysisRequest`를 `get_analysis_client()`가 구성한 `LocalAnalysisClient`에 전달한다. | SMS는 `subject: null`, 이메일은 제목을 포함하고 원문 URL은 후보 목록에 보존한다. |
+| UI-F-11 | 분석 요청 | 공통 `AnalysisRequest`를 파이프라인에 전달한다. | SMS는 `subject: null`, 이메일은 제목을 포함하고 원문 URL은 후보 목록에 보존한다. |
 | UI-F-12 | 중복 요청 방지 | 분석 중 재요청을 차단한다. | 한 번의 사용자 동작으로 요청이 중복 실행되지 않는다. |
 | UI-F-13 | 진행 상태 | 요청의 시작·진행·완료·실패 상태를 안내한다. | 실제 내부 단계를 추정하지 않고 통합 로딩 상태만 표시한다. |
 | UI-F-14 | 종합 결과 | 종합 주의 수준과 요약을 먼저 표시한다. | 상세 결과보다 상단에 핵심 판단이 표시된다. |
@@ -148,18 +148,17 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 | UI-F-16 | 대응 방법 | 즉시 수행할 행동을 우선순위대로 표시한다. | 순번과 함께 최대 5개 표시한다. |
 | UI-F-17 | 문자·이메일 상세 | 분류 라벨, 피싱 확률, 위험 신호와 모델 버전을 표시한다. | `phishing_probability`를 재계산하거나 임의로 보정하지 않는다. |
 | UI-F-18 | URL 상세 | URL별 상태, 위험 점수와 위험 신호를 표시한다. | URL별 오류와 출처 유형이 구분되고 일부 실패 시 성공 결과가 유지된다. |
-| UI-F-19 | 공식 출처 | 별도 `FollowupResponse`의 승인된 Web/File 근거만 표시한다. | 의심 URL과 후속 근거가 구분되고 엄격한 결속 검증을 통과한 공식 출처만 클릭 가능하다. |
-| UI-F-20 | 분석 한계 | 로컬 모델 한계와 후속 기능의 사용 불가·근거 폐기를 안내한다. | 결과 유무와 관계없이 한계 정보를 확인할 수 있다. |
-| UI-F-21 | URL 실패 표시 | 일부 URL 로컬 분석 실패 시 나머지 결과와 URL별 오류를 표시한다. | 현재 primary 상태는 `partial`로 바뀌지 않으며 `failed_count`와 `errors`로 실패를 나타낸다. |
-| UI-F-22 | 전체 오류 | 로컬 분석 불가 상황을 안내한다. | 내부 원문을 노출하지 않고 초기화와 새 분석을 제공한다. |
+| UI-F-19 | 공식 출처 | Web/File Search 근거를 표시한다. | 의심 URL과 공식 출처가 구분되고 검증된 공식 출처만 클릭 가능하다. |
+| UI-F-20 | 분석 한계 | 검색 실패, 모델 한계 및 안전 확정 불가를 안내한다. | 결과 유무와 관계없이 한계 정보를 확인할 수 있다. |
+| UI-F-21 | 부분 실패 | 일부 URL 또는 검색 기능 실패 시 나머지 결과를 표시한다. | 전체 화면이 실패 화면으로 대체되지 않는다. |
+| UI-F-22 | 전체 오류 | 분석 불가 상황을 안내한다. | 내부 원문을 노출하지 않고 재시도·초기화 버튼을 제공한다. |
 | UI-F-23 | 초기화 | 입력, 파일, 미리보기와 결과를 제거한다. | 문자 입력과 파일 업로더를 포함한 초기 화면으로 복귀한다. |
-| UI-F-24 | 분석 후 채팅 | 로컬 1차 분석 뒤 provider trust가 성립한 경우에만 분석 결과 기반 추천 질문과 직접 입력창을 표시한다. | trust 실패 시 Responses 호출 없이 사용 불가 안내와 로컬 결과를 유지하고, File gate만 실패하면 Web-only 결과를 허용한다. |
-| UI-F-25 | 분석 컨텍스트 고정 | 승인된 1차 분석 결과의 허용 필드만 별도 스냅샷으로 후속 흐름에 전달한다. | 질문·후속 출력이 1차 분류 입력, 라벨, 점수 또는 임계값을 바꾸지 않는다. |
-| UI-F-26 | 두-call 후속과 근거 | 첫 call은 `build_security_action_plan`을 강제하고, 두 번째 call만 OpenAI 호스팅 Web Search와 File gate를 통과한 File Search를 선택적으로 사용한다. | File gate의 exact-match를 포함한 기준은 API 기술명세서 9.3절을 따르며, 보조 근거와 사용 도구만 표시한다. |
-| UI-F-27 | 채팅 상태 격리 | 입력 변경, 재분석 또는 초기화 시 대화 기록을 제거한다. | 서로 다른 분석 건의 컨텍스트가 섞이지 않는다. |
-| UI-F-28 | 대화 데이터 최소화 | 후속 응답은 provider 영구 대화 객체를 만들지 않고 세션의 안전한 공개 결과만 관리한다. | 두 Responses 요청에 `store=False`를 적용하고 provider ID·encrypted reasoning은 표시·저장하지 않는다. |
-| UI-F-29 | 근거 fail-closed | Web/File claim과 citation의 URL·파일·도구 결과 결속을 확인한다. | 하나라도 불일치·고아·중복이면 모든 보조 주장·인용을 숨기고 action-plan fallback을 표시한다. |
-| UI-F-30 | 분석 결과 시각화 | 메시지 확률, 메시지 특징 기여도, URL 위험 점수와 URL 특징값을 계약 필드 기준으로 시각화한다. | 값이 없거나 `None`이면 임의 값을 만들지 않고 해당 그래프를 숨기거나 미제공 안내를 표시한다. |
+| UI-F-24 | 분석 후 채팅 | 분석 성공 이후에만 분석 결과 기반 추천 질문 버튼과 직접 입력창을 표시한다. | 분석 전에는 채팅이 노출되지 않고, 추천 질문은 클릭 즉시 전송되며, 채팅 내용이 1차 분석에 영향을 주지 않는다. |
+| UI-F-25 | 분석 컨텍스트 고정 | 승인된 분석 결과 필드만 별도 스냅샷으로 LLM에 전달한다. | 원문 임의 필드와 채팅 질문이 1차 분류 입력에 합쳐지지 않는다. |
+| UI-F-26 | 검색 도구 사용 | 후속 대화에서 Web Search와 설정된 경우 File Search를 사용한다. | 사용 도구와 확인 가능한 출처가 답변 아래에 표시된다. |
+| UI-F-27 | 채팅 상태 격리 | 입력 변경, 재분석 또는 초기화 시 대화 기록을 제거한다. | 서로 다른 분석 건의 대화 컨텍스트가 섞이지 않는다. |
+| UI-F-28 | 대화 데이터 최소화 | 후속 응답은 API 영구 대화 객체를 만들지 않고 세션에서만 관리한다. | Responses 요청에 `store: false`가 적용되고 새로고침 시 대화가 유지되지 않는다. |
+| UI-F-29 | 분석 결과 시각화 | 메시지 확률, 메시지 특징 기여도, URL 위험 점수와 URL 특징값을 계약 필드 기준으로 시각화한다. | 값이 없거나 `None`이면 임의 값을 만들지 않고 해당 그래프를 숨기거나 미제공 안내를 표시한다. |
 
 ## 7. 화면 상태
 
@@ -169,8 +168,9 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 | 입력 완료 | SMS 원문 또는 파일명과 검증 상태 | 입력 변경, 초기화 |
 | 미리보기 | 문자·이메일 정보와 URL 후보 목록 | 분석 시작, 초기화 |
 | 분석 중 | `입력 내용을 분석하고 있습니다.` 통합 로딩 표시 | 중복 분석 차단 |
-| 분석 성공 | primary `status=success`의 종합 결과와 상세 탭(일부 URL 오류 포함 가능) | 새 분석, 초기화 |
-| 분석 실패 | primary `status=error`의 오류 안내 | 재시도, 초기화 |
+| 분석 성공 | 종합 결과와 상세 탭 | 새 분석, 초기화 |
+| 부분 성공 | 정상 결과와 기능별 오류 | 결과 확인, 재시도 |
+| 분석 실패 | 오류 안내 | 재시도, 초기화 |
 
 ## 8. URL 처리 UI 원칙
 
@@ -181,10 +181,11 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 - HTML 엔티티는 파서에서 복원하되 `javascript:`, `mailto:`, `data:`, `cid:` 등 비HTTP 링크는 URL 분석 후보에서 제외한다.
 - `cid:` 및 `data:` URL은 외부 URL 분석 대상에서 제외한다.
 - 본문 내 URL은 `[URL]`로 치환한다.
-- `LocalAnalysisClient`가 `src.ui.url_candidates`를 사용해 URL을 재검증하고 최초 등장 순서 기준으로 중복 제거·우선순위화한다.
-- `LocalAnalysisClient`가 사용자 클릭 대상인 본문 URL과 `href`를 이미지 `src`보다 우선하여 **결정된 상한 20개**를 선택한다.
-- 20개를 초과하면 제외된 URL 개수를 UI에 표시한다. 이 상한과 위험 임계값은 API 기술명세서 9.3절을 따른다.
-- `LocalAnalysisClient`가 선택된 URL별로 `LocalUrlAnalysisClient`를 통해 `analyze_url()`을 호출하며, `url_analyzer.py`는 URL 추론만 수행한다.
+- API는 URL을 재검증하고 최초 등장 순서 기준으로 중복 제거한다.
+- 사용자 클릭 대상인 본문 URL과 `href`를 이미지 `src`보다 우선하여 최대 20개까지 분석한다.
+- 20개를 초과하면 제외된 URL 개수를 UI에 표시한다.
+- 최대 분석 개수는 `MAX_URLS_TO_ANALYZE` 설정으로 변경할 수 있다.
+- API 내부에서 URL별 분석 함수를 반복 호출한다.
 - UI는 최초 등장 순서와 URL 출처 유형에 맞춰 결과를 표시한다.
 - URL 하나의 실패가 다른 URL 결과를 가리지 않게 한다.
 - SMS와 이메일에서 추출된 의심 URL은 자동으로 열거나 접속하지 않는다.
@@ -220,7 +221,7 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 | 파싱 실패 | `이메일 내용을 읽을 수 없습니다. 파일을 확인해 주세요.` |
 | URL 없음 | `URL이 발견되지 않았습니다. 문자·이메일 본문 분석은 계속 진행됩니다.` |
 | 일부 URL 실패 | `일부 URL을 분석하지 못했습니다. 확인 가능한 결과만 표시합니다.` |
-| 후속 기능 사용 불가 | `로컬 분석 결과는 계속 확인할 수 있습니다. 후속 보안 안내는 현재 사용할 수 없습니다.` |
+| API 실패 | `분석 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.` |
 | 검색 결과 없음 | `관련 공식 자료를 찾지 못했습니다. 검색 결과가 없다고 안전한 것은 아닙니다.` |
 
 ## 11. 접근성 및 반응형 기준
@@ -246,9 +247,9 @@ SafeMate AI의 사용자 시나리오를 기준으로 Streamlit UI가 제공해�
 - [x] 유효한 `.eml` 입력은 `input_type: "email"`을 사용한다.
 - [x] URL 후보는 SMS 텍스트, 이메일 텍스트와 HTML `href`·외부 이미지 `src`에서 추출한다.
 - [x] URL 후보의 출처 유형과 원본 위치를 내부 요청에 보존한다.
-- [x] URL 선택·중복 제거·20개 제한은 `LocalAnalysisClient`와 `src.ui.url_candidates`에서 한 번만 수행하며 `url_analyzer.py`는 URL 추론만 수행한다.
-- [x] `get_analysis_client()`가 만든 `LocalAnalysisClient`가 `analyze_message()`를 호출하고, 선택된 URL은 상속 URL adapter를 통해 `url_analyzer.analyze_url()`로 전달한다.
+- [x] URL 선택·중복 제거·20개 제한은 `url_analyzer.py`에서 한 번만 수행한다.
+- [x] 분석 파이프라인이 `analyze_message()`와 URL별 `analyze_url()`을 직접 호출한다.
 - [x] 실제 단계 상태가 없는 경우 통합 로딩만 표시한다.
 - [x] 의심 URL은 비활성화하고 검증된 공식 출처는 클릭 가능하게 표시한다.
-- [x] 후속 capability 기본 비활성화와 전제조건별 안내는 API 기술명세서 9.3절의 결정된 정책을 따른다.
+- [ ] API 타임아웃
 - [ ] 위험 수준별 UI 색상·문구 최종 승인

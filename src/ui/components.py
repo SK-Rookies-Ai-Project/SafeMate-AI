@@ -78,9 +78,8 @@ def build_chat_suggestions(result: dict) -> list[str]:
 
 def render_data_notice() -> None:
     st.info(
-        "1차 분석은 이 기기에서 로컬 모델로 처리됩니다. 후속 대화를 활성화하면 질문, "
-        "이전 대화 기록, 분석 결과가 외부 AI 서비스 및 등록된 검색 도구로 전송될 수 있습니다. "
-        "실제 비밀번호·계좌정보 등 민감정보는 입력하지 마세요."
+        "입력한 문자 또는 이메일 내용은 분석 과정에서 외부 AI 서비스로 "
+        "전송될 수 있습니다. 실제 비밀번호·계좌정보 등 민감정보는 입력하지 마세요."
     )
 
 
@@ -315,350 +314,29 @@ def _safe_official_http_url(value: object) -> str | None:
     return str(value).strip()
 
 
-def build_chat_history_message(reply: dict) -> dict:
-    """Project a provider reply onto the closed public history DTO."""
-    if not isinstance(reply, dict):
-        return {"role": "assistant", "content": ""}
-
-    message = {
-        "role": "assistant",
-        "content": reply.get("text") if isinstance(reply.get("text"), str) else "",
+def render_chat_sources(citations: list[dict], tools_used: list[str]) -> None:
+    """Display tool activity and user-visible citations for a chat response."""
+    labels = {
+        "web_search": "웹 검색",
+        "file_search": "보안 문서 검색",
     }
-    schema_version = reply.get("schema_version")
-    if isinstance(schema_version, str):
-        message["schema_version"] = schema_version
-    if action_plan := _history_action_plan(reply.get("action_plan")):
-        message["action_plan"] = action_plan
-    claims = _history_claims(reply.get("supplemental_claims"))
-    if claims:
-        message["supplemental_claims"] = claims
-    citations = _history_citations(reply.get("citations"))
-    if citations:
-        message["citations"] = citations
-    tools_used = _history_tools_used(reply.get("tools_used"))
-    if tools_used:
-        message["tools_used"] = tools_used
-    tool_status = _history_tool_status(reply.get("tool_status"))
-    if tool_status:
-        message["tool_status"] = tool_status
-    citation_status = reply.get("citation_status")
-    if citation_status in {"accepted", "rejected", "not_called"}:
-        message["citation_status"] = citation_status
-    if reply.get("degraded") is True:
-        message["degraded"] = True
-    fallback = reply.get("fallback")
-    if isinstance(fallback, str) and fallback:
-        message["fallback"] = fallback
-    return message
+    visible_tools = [labels[item] for item in tools_used if item in labels]
+    if visible_tools:
+        st.caption("사용한 도구: " + " · ".join(visible_tools))
 
-
-def _history_action_plan(value: object) -> dict:
-    if not isinstance(value, dict):
-        return {}
-    action_plan: dict[str, list[object]] = {}
-    for field in ("do_now", "avoid", "escalate_when"):
-        items = value.get(field)
-        if not isinstance(items, list):
-            continue
-        safe_items = [
-            {"id": item["id"], "text": item["text"]}
-            for item in items
-            if isinstance(item, dict)
-            and isinstance(item.get("id"), str)
-            and isinstance(item.get("text"), str)
-            and item["id"]
-            and item["text"]
-        ]
-        if safe_items:
-            action_plan[field] = safe_items
-    limitations = value.get("limitations")
-    if isinstance(limitations, list):
-        safe_limitations = [item for item in limitations if isinstance(item, str) and item]
-        if safe_limitations:
-            action_plan["limitations"] = safe_limitations
-    return action_plan
-
-
-def _history_claims(value: object) -> list[dict]:
-    if not isinstance(value, list):
-        return []
-    claims: list[dict] = []
-    for claim_ordinal, item in enumerate(value):
-        if (
-            not isinstance(item, dict)
-            or not isinstance(item.get("text"), str)
-            or not item["text"]
-            or item.get("source_scope") not in {"web", "file", "mixed"}
-            or not isinstance(item.get("file_refs"), list)
-        ):
-            continue
-        claims.append(
-            {
-                "text": item["text"],
-                "source_scope": item["source_scope"],
-                "claim_ordinal": claim_ordinal,
-                "file_refs": [
-                    reference
-                    for reference in item["file_refs"]
-                    if isinstance(reference, str)
-                ],
-            }
-        )
-    return claims
-
-
-def _history_citations(value: object) -> list[dict]:
-    if not isinstance(value, list):
-        return []
-    citations: list[dict] = []
-    for item in value:
-        if (
-            not isinstance(item, dict)
-            or not isinstance(item.get("title"), str)
-            or not isinstance(item.get("claim_ordinal"), int)
-            or isinstance(item["claim_ordinal"], bool)
-            or item["claim_ordinal"] < 0
-        ):
-            continue
-        if item.get("type") == "url" and (url := _safe_official_http_url(item.get("url"))):
-            citations.append(
-                {
-                    "type": "url",
-                    "title": item["title"],
-                    "url": url,
-                    "claim_ordinal": item["claim_ordinal"],
-                }
-            )
-        elif item.get("type") == "file":
-            citations.append(
-                {
-                    "type": "file",
-                    "title": item["title"],
-                    "claim_ordinal": item["claim_ordinal"],
-                }
-            )
-    return citations
-
-
-def _history_tools_used(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return list(
-        dict.fromkeys(
-            item
-            for item in value
-            if isinstance(item, str) and item in {"web_search", "file_search"}
-        )
-    )
-
-
-def _history_tool_status(value: object) -> dict:
-    if not isinstance(value, dict):
-        return {}
-    return {
-        tool: status
-        for tool in ("web", "file")
-        if isinstance(status := value.get(tool), str)
-        and status in {"completed", "failed", "not_called", "not_configured", "unselected"}
-    }
-
-
-def render_chat_response(message: dict) -> None:
-    """Render a public follow-up response without repeating structured guidance."""
-    action_plan = message.get("action_plan")
-    if isinstance(action_plan, dict) and action_plan:
-        _render_action_plan(action_plan)
-    else:
-        content = message.get("content")
-        if isinstance(content, str):
-            st.text(content)
-
-    claims = message.get("supplemental_claims")
-    citations = message.get("citations")
-    safe_citations = citations if isinstance(citations, list) else []
-    rendered_claims = _renderable_supplemental_claims(
-        claims,
-        safe_citations,
-        message.get("tool_status"),
-        message.get("citation_status"),
-    )
-    allowed_claim_ordinals = {
-        claim["claim_ordinal"] for claim in rendered_claims
-    }
-    if rendered_claims:
-        st.markdown("#### 추가 확인 내용")
-        for claim in rendered_claims:
-            st.text(f"• {claim['text']}")
-
-    source_provenance = render_chat_sources(
-        safe_citations,
-        message.get("tool_status") if isinstance(message.get("tool_status"), dict) else {},
-        message.get("citation_status"),
-        allowed_claim_ordinals=allowed_claim_ordinals,
-    )
-    citation_status = message.get("citation_status")
-    if source_provenance:
-        st.caption(f"출처: {source_provenance}")
-    elif citation_status in {"accepted", "rejected", "not_called"}:
-        st.caption("후속 안내에 확인되어 표시할 수 있는 출처가 없습니다.")
-
-    if message.get("degraded") is True or message.get("fallback"):
-        st.caption("추가 확인이 제한되어 기본 대응 안내만 제공합니다.")
-
-def _render_action_plan(action_plan: dict) -> None:
-    sections = (
-        ("do_now", "지금 할 일"),
-        ("avoid", "피해야 할 일"),
-        ("escalate_when", "추가 대응이 필요한 경우"),
-        ("limitations", "안내의 한계"),
-    )
-    rendered = False
-    for field, heading in sections:
-        items = action_plan.get(field)
-        safe_items: list[str] = []
-        if isinstance(items, list):
-            for item in items:
-                if (
-                    isinstance(item, dict)
-                    and isinstance(item.get("id"), str)
-                    and isinstance(item.get("text"), str)
-                ):
-                    safe_items.append(item["text"])
-                elif field == "limitations" and isinstance(item, str):
-                    safe_items.append(item)
-        if safe_items:
-            if not rendered:
-                st.markdown("#### 권장 대응")
-                rendered = True
-            st.text(heading)
-            for item in safe_items:
-                st.text(f"• {item}")
-
-def _claim_source_types(source_scope: object) -> tuple[str, ...]:
-    if source_scope == "web":
-        return ("url",)
-    if source_scope == "file":
-        return ("file",)
-    if source_scope == "mixed":
-        return ("url", "file")
-    return ()
-
-
-def _renderable_supplemental_claims(
-    claims: object,
-    citations: object,
-    tool_status: object,
-    citation_status: object,
-) -> list[dict]:
-    if (
-        citation_status != "accepted"
-        or not isinstance(claims, list)
-        or not isinstance(citations, list)
-    ):
-        return []
-    statuses = tool_status if isinstance(tool_status, dict) else {}
-    citation_types_by_ordinal: dict[int, set[str]] = {}
-    for citation in citations:
-        if (
-            not isinstance(citation, dict)
-            or not isinstance(ordinal := citation.get("claim_ordinal"), int)
-            or isinstance(ordinal, bool)
-            or ordinal < 0
-            or not isinstance(citation.get("title"), str)
-            or not citation["title"]
-        ):
-            continue
-        citation_type = citation.get("type")
-        if citation_type == "url" and _safe_official_http_url(citation.get("url")):
-            citation_types_by_ordinal.setdefault(ordinal, set()).add(citation_type)
-        elif citation_type == "file":
-            citation_types_by_ordinal.setdefault(ordinal, set()).add(citation_type)
-    renderable: list[dict] = []
-    for claim in claims:
-        if (
-            not isinstance(claim, dict)
-            or not isinstance(text := claim.get("text"), str)
-            or not text.strip()
-            or not isinstance(ordinal := claim.get("claim_ordinal"), int)
-            or isinstance(ordinal, bool)
-            or ordinal < 0
-        ):
-            continue
-        source_types = _claim_source_types(claim.get("source_scope"))
-        if not source_types or not set(source_types).issubset(
-            citation_types_by_ordinal.get(ordinal, set())
-        ):
-            continue
-        if (
-            ("url" in source_types and statuses.get("web") != "completed")
-            or ("file" in source_types and statuses.get("file") != "completed")
-        ):
-            continue
-        renderable.append(
-            {
-                "text": text,
-                "source_scope": claim["source_scope"],
-                "claim_ordinal": ordinal,
-            }
-        )
-    return renderable
-
-
-def render_chat_sources(
-    citations: list[dict],
-    tool_status: dict | None = None,
-    citation_status: object = None,
-    *,
-    allowed_claim_ordinals: set[int] | None = None,
-) -> str | None:
-    """Display only accepted citations from tools that completed exactly."""
-    if citation_status != "accepted":
-        return None
-    status_by_tool = {
-        "web_search": tool_status.get("web") if isinstance(tool_status, dict) else None,
-        "file_search": tool_status.get("file") if isinstance(tool_status, dict) else None,
-    }
-    renderable: list[dict] = []
-    for citation in citations:
-        if (
-            not isinstance(citation, dict)
-            or not isinstance(citation.get("title"), str)
-            or not isinstance(ordinal := citation.get("claim_ordinal"), int)
-            or isinstance(ordinal, bool)
-            or ordinal < 0
-            or (
-                allowed_claim_ordinals is not None
-                and ordinal not in allowed_claim_ordinals
-            )
-        ):
-            continue
-        if citation.get("type") == "url":
-            if (
-                status_by_tool["web_search"] == "completed"
-                and (url := _safe_official_http_url(citation.get("url")))
-            ):
-                renderable.append({"type": "url", "title": citation["title"], "url": url})
-        elif (
-            citation.get("type") == "file"
-            and citation["title"]
-            and status_by_tool["file_search"] == "completed"
-        ):
-            renderable.append({"type": "file", "title": citation["title"]})
-    if not renderable:
-        return None
+    if not citations:
+        return
     with st.expander("참고 출처"):
-        for citation in renderable:
-            if citation["type"] == "url":
-                st.text(citation["title"])
-                st.link_button("공식 출처 열기", citation["url"])
-            else:
-                st.text(citation["title"])
-    return " · ".join(
-        dict.fromkeys(
-            "웹 검색" if citation["type"] == "url" else "보안 문서 검색"
-            for citation in renderable
-        )
-    )
+        for citation in citations:
+            if citation.get("type") == "url":
+                url = _safe_official_http_url(citation.get("url"))
+                if url:
+                    st.text(str(citation.get("title", "공식 출처")))
+                    st.link_button("공식 출처 열기", url)
+            elif citation.get("type") == "file":
+                st.text(str(citation.get("title", "등록된 보안 문서")))
+
+
 def _format_file_location(item: dict) -> str:
     parts: list[str] = []
     if item.get("filename"):
@@ -669,13 +347,9 @@ def _format_file_location(item: dict) -> str:
 
 
 def _render_limitations(result: dict) -> None:
-    limitations = result.get("limitations", [])
-    if limitations:
+    for limitation in result.get("limitations", []):
         st.warning("분석 한계")
-        for limitation in limitations:
-            st.text(str(limitation.get("message", "분석 한계 정보가 없습니다.")))
-    errors = result.get("errors", [])
-    if errors:
+        st.text(str(limitation.get("message", "분석 한계 정보가 없습니다.")))
+    for error in result.get("errors", []):
         st.error("일부 분석 실패")
-        for error in errors:
-            st.text(str(error.get("message", "일부 분석에 실패했습니다.")))
+        st.text(str(error.get("message", "일부 분석에 실패했습니다.")))

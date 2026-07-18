@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import copy
 import logging
 from uuid import uuid4
-
-from dotenv import load_dotenv
 
 import streamlit as st
 
@@ -15,29 +12,22 @@ from src.analyzers.input_parser import (
     prepare_sms_input,
 )
 from src.client_factory import get_analysis_client
-from src.config import (
-    MAX_SMS_CHARS,
-    is_openai_followup_available,
-    is_openai_followup_enabled,
-)
+from src.config import MAX_SMS_CHARS
 from src.contracts import AnalysisRequestValidationError, build_analysis_request
 from src.services.openai_client import (
     MAX_CHAT_QUESTION_CHARS,
     OpenAISecurityChatClient,
 )
 from src.ui.components import (
-    build_chat_history_message,
     build_chat_suggestions,
     render_analysis_result,
-    render_chat_response,
+    render_chat_sources,
     render_data_notice,
     render_preview,
 )
 
 
 logger = logging.getLogger(__name__)
-load_dotenv()
-
 
 DEFAULT_STATE = {
     "input_type": "sms",
@@ -132,42 +122,23 @@ def parse_selected_input() -> tuple[dict | None, str | None]:
     return prepared, None
 
 
-def create_followup_client() -> OpenAISecurityChatClient | None:
-    """Construct the provider client only after the capability gate passes."""
-    if not is_openai_followup_available():
-        return None
-    return OpenAISecurityChatClient()
-
-
-
-
 def render_followup_chat() -> None:
     """Render chat only after the independent analysis stage has completed."""
     st.divider()
     st.subheader("분석 결과에 대해 SafeMate와 대화하기")
-    if not is_openai_followup_enabled():
-        st.info(
-            "후속 대화 기능은 현재 비활성화되어 있습니다. "
-            "로컬 1차 분석 결과는 계속 사용할 수 있습니다."
-        )
-        return
-    if not is_openai_followup_available():
-        st.info(
-            "후속 대화 기능에 필요한 API 설정이 없어 현재 사용할 수 없습니다. "
-            "로컬 1차 분석 결과는 계속 사용할 수 있습니다."
-        )
-        return
     st.caption(
-        "1차 보안 판정은 로컬 모델로 완료되었습니다. 아래 후속 대화는 활성화된 경우에만 "
-        "등록된 보안 문서와 최신 웹 자료를 활용합니다."
+        "1차 보안 판정은 이미 완료되었습니다. 아래 대화는 그 결과를 바꾸지 않고, "
+        "등록된 보안 문서와 최신 웹 자료를 활용해 후속 대응을 돕습니다."
     )
 
     for message in st.session_state.chat_messages:
         with st.chat_message(message["role"]):
+            st.text(message["content"])
             if message["role"] == "assistant":
-                render_chat_response(message)
-            else:
-                st.text(message.get("content", ""))
+                render_chat_sources(
+                    message.get("citations", []),
+                    message.get("tools_used", []),
+                )
 
     if st.session_state.chat_error:
         st.error(st.session_state.chat_error)
@@ -195,25 +166,28 @@ def render_followup_chat() -> None:
         return
 
     st.session_state.chat_error = None
-    previous_history = copy.deepcopy(st.session_state.chat_messages)
+    previous_history = list(st.session_state.chat_messages)
+    st.session_state.chat_messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.text(question)
 
     try:
         with st.chat_message("assistant"):
             with st.spinner("공식 자료와 최신 정보를 확인하고 있습니다."):
-                chat_client = create_followup_client()
-                if chat_client is None:
-                    raise RuntimeError("followup_capability_unavailable")
-                reply = chat_client.ask(
+                reply = OpenAISecurityChatClient().ask(
                     question=question,
                     analysis_result=st.session_state.analysis_result,
                     history=previous_history,
                 )
-            assistant_message = build_chat_history_message(reply)
-            render_chat_response(assistant_message)
-        st.session_state.chat_messages.extend(
-            [{"role": "user", "content": question}, assistant_message]
+            st.text(reply["text"])
+            render_chat_sources(reply["citations"], reply["tools_used"])
+        st.session_state.chat_messages.append(
+            {
+                "role": "assistant",
+                "content": reply["text"],
+                "citations": reply["citations"],
+                "tools_used": reply["tools_used"],
+            }
         )
     except Exception as exc:
         logger.error("security_chat_failed exception_type=%s", type(exc).__name__)
@@ -289,19 +263,9 @@ if analyze_clicked and prepared_input is not None:
         request = build_analysis_request(prepared_input, request_id)
         with st.spinner("입력 내용을 분석하고 있습니다."):
             result = get_analysis_client().analyze(request)
-        status = result.get("status") if isinstance(result, dict) else None
-        if status == "success":
-            st.session_state.analysis_result = result
-            st.session_state.analysis_status = status
-            st.session_state.last_analyzed_digest = st.session_state.current_input_digest
-        else:
-            st.session_state.analysis_status = "error"
-            st.session_state.analysis_result = None
-            st.session_state.last_analyzed_digest = None
-            st.session_state.analysis_error = (
-                "분석 결과가 완료 상태인지 확인할 수 없습니다. "
-                "입력을 유지한 채 다시 시도해 주세요."
-            )
+        st.session_state.analysis_result = result
+        st.session_state.analysis_status = result.get("status", "success")
+        st.session_state.last_analyzed_digest = st.session_state.current_input_digest
     except AnalysisRequestValidationError as exc:
         logger.warning("analysis_request_rejected request_id=%s", request_id)
         st.session_state.analysis_status = "error"
@@ -321,10 +285,6 @@ if analyze_clicked and prepared_input is not None:
 
 if st.session_state.analysis_error:
     st.error(st.session_state.analysis_error)
-if (
-    st.session_state.analysis_status == "success"
-    and st.session_state.analysis_result
-    and st.session_state.last_analyzed_digest == st.session_state.current_input_digest
-):
+if st.session_state.analysis_result:
     render_analysis_result(st.session_state.analysis_result)
     render_followup_chat()
