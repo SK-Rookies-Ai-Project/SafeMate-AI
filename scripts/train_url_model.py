@@ -25,15 +25,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 from src.analyzers.url import prediction, training
 from src.analyzers.url.constants import MODELS_DIR, URL_BINARY_CSV
+from src.analyzers.url.datasets import dedup_group_split
 from src.analyzers.url.features import (
     FEATURE_NAMES,
     CharTokenizer,
@@ -58,8 +59,8 @@ CHAR_ONLY_MODELS = {"charlstm"}
 # 전체(16.5M행) 학습이 비현실적으로 느린 모델은 학습 표본을 상한으로 자른다
 MAX_FIT_ROWS = {
     "randomforest": 2_000_000,
-    "lstm": 2_000_000,
-    "charlstm": 2_000_000,
+    "lstm": 4_000_000,
+    "charlstm": 4_000_000,
     "logistic": 4_000_000,  # lbfgs는 이 이상에서 시간 대비 이득이 없음
 }
 
@@ -171,6 +172,38 @@ def _n_rows(x):
     return x.shape[0]
 
 
+class HoldoutSpill:
+    """holdout 행렬을 디스크에 저장해 학습 동안 RAM에서 해방한다.
+
+    평가는 각 모델 fit 직후에만 필요한데 행렬을 학습 내내 들고 있으면
+    fit 정점 메모리에 그대로 얹힌다. /tmp는 tmpfs(램)일 수 있어
+    프로젝트 안 디렉터리에 저장한다.
+    """
+
+    def __init__(self, x, tag: str, spill_dir: Path):
+        spill_dir.mkdir(parents=True, exist_ok=True)
+        self._columns = list(x.columns) if hasattr(x, "columns") else None
+        self._sparse = sparse.issparse(x)
+        suffix = "npz" if self._sparse else "npy"
+        self.path = spill_dir / f"holdout_{tag}.{suffix}"
+        if self._sparse:
+            sparse.save_npz(self.path, x.tocsr())
+        else:
+            arr = x.to_numpy() if self._columns else np.asarray(x)
+            np.save(self.path, arr)
+
+    def load(self):
+        if self._sparse:
+            return sparse.load_npz(self.path)
+        arr = np.load(self.path)
+        if self._columns:
+            return pd.DataFrame(arr, columns=self._columns)
+        return arr
+
+    def cleanup(self):
+        self.path.unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # 모델 1개 학습
 # ---------------------------------------------------------------------------
@@ -179,7 +212,7 @@ def train_one(
     model_type,
     x_train,
     y_train,
-    x_test,
+    x_test_spill,
     y_test,
     encoder,
     args,
@@ -190,7 +223,6 @@ def train_one(
     params = dict(MODEL_FIT_PARAMS.get(model_type, {}))
     if model_type == "charlstm" and vectorizer is not None:
         params["vocab_size"] = vectorizer.vocab_size
-
     model = create_model(model_type, random_state, **params)
     best_params = dict(params)
 
@@ -231,12 +263,15 @@ def train_one(
     fit_seconds = time.time() - started
     log.info("%s 본 학습 완료 %.0fs", model_type, fit_seconds)
 
-    # holdout 평가
+    # holdout 평가 — 학습 동안 디스크에 있던 holdout을 여기서만 올린다
+    n_train = _n_rows(fit_x)
+    del fit_x, fit_y
+    x_test = x_test_spill.load()
     pred = model.predict(x_test)
     metrics = {
         "accuracy": float(accuracy_score(y_test, pred)),
         "f1_macro": float(f1_score(y_test, pred, average="macro")),
-        "n_train": _n_rows(fit_x),
+        "n_train": n_train,
         "n_test": _n_rows(x_test),
         "fit_seconds": round(fit_seconds, 1),
     }
@@ -252,6 +287,7 @@ def train_one(
             metrics["roc_auc"] = float(
                 roc_auc_score(y_test == risk_idx, proba[:, risk_idx])
             )
+    del x_test
     log.info("%s holdout: %s", model_type, metrics)
 
     bundle = ModelBundle(
@@ -285,6 +321,14 @@ def main():
     parser.add_argument("--nrows", type=int, default=None,
                         help="전체 대신 랜덤 표본 n행만 사용 (시험용)")
     parser.add_argument("--test-size", type=float, default=0.05)
+    parser.add_argument("--split", default="group",
+                        choices=["group", "random"],
+                        help="group: 등록 도메인(eTLD+1) 단위 분리로 "
+                             "train/test 도메인 누수 차단 (기본), "
+                             "random: 기존 URL 단위 랜덤 분리")
+    parser.add_argument("--dedup", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="canonical 중복·라벨충돌 행 제거 (기본: 켜짐)")
     parser.add_argument("--tune", action=argparse.BooleanOptionalAction,
                         default=True)
     parser.add_argument("--tune-lstm", action="store_true",
@@ -306,6 +350,10 @@ def main():
     parser.add_argument("--char-max-len", type=int, default=128,
                         help="charlstm 입력 문자 시퀀스 최대 길이")
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--spill-dir", type=Path,
+                        default=MODELS_DIR.parent / "data" / "tmp",
+                        help="holdout 행렬 임시 저장 위치 "
+                             "(/tmp는 tmpfs=램이라 프로젝트 경로 사용)")
     parser.add_argument("--log-file",
                         default=Path(__file__).with_suffix(".log"))
     args = parser.parse_args()
@@ -338,19 +386,24 @@ def main():
              f"{len(df):,}", dict(pd.Series(labels).value_counts()))
     del df
 
-    # 2) 라벨 인코딩 + raw URL split. TF-IDF는 train 데이터에만 fit한다.
+    # 2) 라벨 인코딩 + dedup + split. TF-IDF는 train 데이터에만 fit한다.
+    #    기본은 등록 도메인 group split — 랜덤 split은 test 행 대부분이
+    #    train과 같은 도메인이라 지표가 도메인 암기로 부풀려진다.
     encoder = LabelEncoder()
     y = encoder.fit_transform(labels)
-    urls_train, urls_test, y_train, y_test = train_test_split(
-        urls, y, test_size=args.test_size,
-        random_state=args.random_state, stratify=y,
+    urls_train, urls_test, y_train, y_test = dedup_group_split(
+        urls, y, test_size=args.test_size, random_state=args.random_state,
+        dedup=args.dedup, split=args.split,
     )
     del urls
-    log.info("train %s / test %s", f"{len(urls_train):,}", f"{len(urls_test):,}")
+    log.info("train %s / test %s (split=%s, dedup=%s)",
+             f"{len(urls_train):,}", f"{len(urls_test):,}",
+             args.split, args.dedup)
 
     # 3) representation별 전처리 + 모델 학습
     bundles = {}
     for representation in args.representations:
+        rep_y_train = y_train
         if representation == "feature":
             x_train = extract_features_parallel(urls_train, workers=args.workers)
             x_test = extract_features_parallel(urls_test, workers=args.workers)
@@ -362,11 +415,28 @@ def main():
                 args,
             )
         else:
+            # tfidf 행렬은 행당 ~100 비영원소라 전체 벡터화 후 fit 표본을
+            # 복사하면 같은 데이터가 3벌(전체/부분/DMatrix) 생겨 스왑까지
+            # 간다. 표본 상한을 벡터화 전에 적용해 전체 행렬 자체를 없앤다.
+            tfidf_urls_train = urls_train
+            if args.max_fit_rows and len(urls_train) > args.max_fit_rows:
+                idx = np.random.default_rng(args.random_state).choice(
+                    len(urls_train), size=args.max_fit_rows, replace=False
+                )
+                tfidf_urls_train = [urls_train[i] for i in idx]
+                rep_y_train = y_train[idx]
+                log.info("tfidf 표본 상한 %s행: 벡터화 전 적용",
+                         f"{args.max_fit_rows:,}")
             x_train, x_test, vectorizer = build_tfidf_matrices(
-                urls_train,
+                tfidf_urls_train,
                 urls_test,
                 args,
             )
+            del tfidf_urls_train
+
+        # holdout은 평가 때만 필요하니 디스크로 내려 fit 정점에서 제외
+        x_test_spill = HoldoutSpill(x_test, representation, args.spill_dir)
+        del x_test
 
         for model_type in args.models:
             # charlstm은 문자 입력 전용, 나머지 모델은 수치 입력 전용
@@ -376,14 +446,15 @@ def main():
             bundles[key] = train_one(
                 model_type,
                 x_train,
-                y_train,
-                x_test,
+                rep_y_train,
+                x_test_spill,
                 y_test,
                 encoder,
                 args,
                 kind=representation,
                 vectorizer=vectorizer,
             )
+        x_test_spill.cleanup()
 
         # 4) representation별 최고 성능(f1_macro) 모델을 기본 경로로 저장
         rep_bundles = {

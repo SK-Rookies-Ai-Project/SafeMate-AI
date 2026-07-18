@@ -1,9 +1,14 @@
 """URL 학습 데이터 로딩과 DataSet 생성."""
 
+import logging
+import zlib
 from pathlib import Path
 from typing import Optional, Sequence, Tuple, Union
 
+import numpy as np
 import pandas as pd
+import tldextract
+from sklearn.model_selection import train_test_split
 
 from src.analyzers.url import features
 from src.analyzers.url.constants import (
@@ -12,6 +17,89 @@ from src.analyzers.url.constants import (
     URL_BINARY_CSV,
 )
 from src.analyzers.url.schemas import DataSet
+
+log = logging.getLogger(__name__)
+
+# 오프라인 고정: 패키지 내장 PSL 스냅샷만 사용 (네트워크 fetch 없음 → 재현 가능)
+_tld_extract = tldextract.TLDExtract(suffix_list_urls=())
+
+
+def registered_domain(host: str) -> str:
+    """host의 등록 도메인(eTLD+1). IP·localhost 등 PSL 밖이면 host 그대로."""
+    return _tld_extract(host).top_domain_under_public_suffix or host
+
+
+def dedup_group_split(
+    urls: Sequence[str],
+    y,
+    test_size: float = 0.05,
+    random_state: int = 42,
+    dedup: bool = True,
+    split: str = "group",
+) -> Tuple[list, list, np.ndarray, np.ndarray]:
+    """canonical 중복을 제거하고 등록 도메인 단위로 train/test를 나눈다.
+
+    랜덤 URL split은 test URL 대부분이 train과 같은 도메인이라
+    '새 URL 일반화'가 아닌 '본 도메인 암기'를 측정하게 된다.
+    split='group'은 등록 도메인(eTLD+1)의 해시로 행을 배정해
+    train/test 간 도메인이 겹치지 않게 한다. 해시 배정이라 같은
+    random_state면 nrows 표본이 달라져도 도메인의 소속이 안 바뀐다.
+    dedup=True면 canonical 형태가 같은 중복 행과, canonical이 같은데
+    라벨이 충돌하는 행(라벨 노이즈)을 먼저 제거한다.
+
+    Returns:
+        (urls_train, urls_test, y_train, y_test) — urls는 원문 그대로.
+    """
+    if split not in ("group", "random"):
+        raise ValueError(f"지원하지 않는 split: {split!r} (group 또는 random)")
+
+    urls = pd.Series(urls, dtype=object).astype(str)
+    y = np.asarray(y)
+    canonical = urls.map(features.canonicalize_url_for_tfidf)
+
+    if dedup:
+        before = len(urls)
+        n_dup = int(canonical.duplicated().sum())
+        keep = ~canonical.duplicated().values
+        # canonical이 같은데 라벨이 다른 그룹은 전부 제거
+        pairs = pd.DataFrame({"c": canonical.values, "y": y}).drop_duplicates()
+        conflicts = set(pairs.loc[pairs["c"].duplicated(), "c"])
+        if conflicts:
+            keep &= ~canonical.isin(conflicts).values
+        urls, canonical, y = urls[keep], canonical[keep], y[keep]
+        log.info(
+            "dedup: %s행 → %s행 (canonical 중복 %s, 라벨충돌 그룹 %s)",
+            f"{before:,}", f"{len(urls):,}", f"{n_dup:,}", len(conflicts),
+        )
+
+    if split == "random":
+        return train_test_split(
+            urls.tolist(), y, test_size=test_size,
+            random_state=random_state, stratify=y,
+        )
+
+    hosts = canonical.str.extract(r"^([^/:?]*)", expand=False)
+    domains = hosts.map(
+        {h: registered_domain(h) for h in hosts.unique()}
+    )
+    # 도메인 해시 < threshold → test. salt로 random_state를 섞어 재현 가능.
+    salt = f"{random_state}:".encode()
+    threshold = int(test_size * 2 ** 32)
+    unique_domains = domains.unique()
+    to_test = {
+        d: zlib.crc32(salt + d.encode()) < threshold for d in unique_domains
+    }
+    mask_test = domains.map(to_test).values
+    log.info(
+        "group split: 도메인 %s개, test 행 %.2f%% (목표 %.2f%%)",
+        f"{len(unique_domains):,}", mask_test.mean() * 100, test_size * 100,
+    )
+    return (
+        urls[~mask_test].tolist(),
+        urls[mask_test].tolist(),
+        y[~mask_test],
+        y[mask_test],
+    )
 
 
 # schemas.py의 DataSet 클래스 활용
