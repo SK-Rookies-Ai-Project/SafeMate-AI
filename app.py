@@ -11,19 +11,19 @@ from src.analyzers.input_parser import (
     create_input_digest,
     prepare_sms_input,
 )
-from src.client_factory import get_analysis_client
 from src.config import MAX_SMS_CHARS
 from src.contracts import AnalysisRequestValidationError, build_analysis_request
 from src.services.openai_client import (
     MAX_CHAT_QUESTION_CHARS,
-    OpenAISecurityChatClient,
+    SafeMateAgent,
 )
 from src.ui.components import (
     build_chat_suggestions,
     render_analysis_result,
-    render_chat_sources,
+    render_cited_response,
     render_data_notice,
     render_preview,
+    render_supplemental_analysis,
 )
 
 
@@ -33,9 +33,9 @@ DEFAULT_STATE = {
     "input_type": "sms",
     "sms_text": "",
     "current_input_digest": None,
-    "last_analyzed_digest": None,
     "analysis_status": "idle",
     "analysis_result": None,
+    "supplemental_analysis": None,
     "analysis_error": None,
     "chat_messages": [],
     "chat_error": None,
@@ -51,9 +51,13 @@ def initialize_state() -> None:
 
 def clear_analysis_state() -> None:
     st.session_state.current_input_digest = None
-    st.session_state.last_analyzed_digest = None
+    clear_result_state()
+
+
+def clear_result_state() -> None:
     st.session_state.analysis_status = "idle"
     st.session_state.analysis_result = None
+    st.session_state.supplemental_analysis = None
     st.session_state.analysis_error = None
     clear_chat_state()
 
@@ -67,11 +71,7 @@ def update_current_input_digest(digest: str | None) -> None:
     """Clear stale results whenever the selected input content changes."""
     previous_digest = st.session_state.current_input_digest
     if previous_digest != digest:
-        st.session_state.last_analyzed_digest = None
-        st.session_state.analysis_status = "idle"
-        st.session_state.analysis_result = None
-        st.session_state.analysis_error = None
-        clear_chat_state()
+        clear_result_state()
     st.session_state.current_input_digest = digest
 
 
@@ -88,6 +88,13 @@ def reset_all() -> None:
         st.session_state[key] = value
     st.session_state.input_type = current_type
     st.session_state.uploader_key = uploader_key
+
+
+def require_analysis_status(result: dict) -> str:
+    status = result.get("status")
+    if status not in {"success", "error"}:
+        raise ValueError("Analysis result has an invalid status.")
+    return status
 
 
 def parse_selected_input() -> tuple[dict | None, str | None]:
@@ -133,12 +140,14 @@ def render_followup_chat() -> None:
 
     for message in st.session_state.chat_messages:
         with st.chat_message(message["role"]):
-            st.text(message["content"])
             if message["role"] == "assistant":
-                render_chat_sources(
-                    message.get("citations", []),
-                    message.get("tools_used", []),
+                render_cited_response(
+                    message["content"],
+                    citations=message.get("citations", []),
+                    tools_used=message.get("tools_used", []),
                 )
+            else:
+                st.text(message["content"])
 
     if st.session_state.chat_error:
         st.error(st.session_state.chat_error)
@@ -174,13 +183,16 @@ def render_followup_chat() -> None:
     try:
         with st.chat_message("assistant"):
             with st.spinner("공식 자료와 최신 정보를 확인하고 있습니다."):
-                reply = OpenAISecurityChatClient().ask(
+                reply = SafeMateAgent().ask(
                     question=question,
                     analysis_result=st.session_state.analysis_result,
                     history=previous_history,
                 )
-            st.text(reply["text"])
-            render_chat_sources(reply["citations"], reply["tools_used"])
+            render_cited_response(
+                reply["text"],
+                citations=reply["citations"],
+                tools_used=reply["tools_used"],
+            )
         st.session_state.chat_messages.append(
             {
                 "role": "assistant",
@@ -258,18 +270,27 @@ if analyze_clicked and prepared_input is not None:
     request_id = f"analysis-{uuid4().hex[:12]}"
     st.session_state.analysis_status = "analyzing"
     st.session_state.analysis_error = None
+    st.session_state.supplemental_analysis = None
     clear_chat_state()
     try:
         request = build_analysis_request(prepared_input, request_id)
         with st.spinner("입력 내용을 분석하고 있습니다."):
-            result = get_analysis_client().analyze(request)
+            agent_result = SafeMateAgent().analyze(request)
+        result = agent_result["analysis_result"]
+        status = require_analysis_status(result)
         st.session_state.analysis_result = result
-        st.session_state.analysis_status = result.get("status", "success")
-        st.session_state.last_analyzed_digest = st.session_state.current_input_digest
+        if agent_result.get("supplemental_text"):
+            st.session_state.supplemental_analysis = {
+                "text": agent_result["supplemental_text"],
+                "tools_used": agent_result.get("tools_used", []),
+                "citations": agent_result.get("citations", []),
+            }
+        st.session_state.analysis_status = status
     except AnalysisRequestValidationError as exc:
         logger.warning("analysis_request_rejected request_id=%s", request_id)
         st.session_state.analysis_status = "error"
         st.session_state.analysis_result = None
+        st.session_state.supplemental_analysis = None
         st.session_state.analysis_error = str(exc)
     except Exception as exc:
         logger.error(
@@ -279,6 +300,7 @@ if analyze_clicked and prepared_input is not None:
         )
         st.session_state.analysis_status = "error"
         st.session_state.analysis_result = None
+        st.session_state.supplemental_analysis = None
         st.session_state.analysis_error = (
             "분석 중 오류가 발생했습니다. 입력을 유지한 채 다시 시도해 주세요."
         )
@@ -287,4 +309,6 @@ if st.session_state.analysis_error:
     st.error(st.session_state.analysis_error)
 if st.session_state.analysis_result:
     render_analysis_result(st.session_state.analysis_result)
+    if st.session_state.supplemental_analysis:
+        render_supplemental_analysis(st.session_state.supplemental_analysis)
     render_followup_chat()
