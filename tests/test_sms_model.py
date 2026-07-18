@@ -1,15 +1,45 @@
+"""
+analyze_message.py 에서 `from sms_model import analyze_sms` 로 불러쓰는
+SMS 스캠(피싱) 탐지 프로덕션 모듈.
+
+학습/실험 코드는 여기 없습니다 (train_experiments.py, train_and_export_model.py 참고).
+이 파일은 오직 sms_spam_model.pkl을 로드해서 문자 한 건을 판독하는 역할만 합니다.
+
+이 모듈은 프로젝트 공통 연동 조건을 따릅니다:
+  - UI는 analyze_sms() 단일 함수만 호출 (내부 구현에 관여하지 않음)
+  - 추론 요청마다 재학습하지 않음, 모델은 최초 호출 시 1회만 로드 후 캐시
+  - 반환값은 항상 JSON 직렬화 가능한 dict (status/model_version 항상 포함)
+  - 실패 시에도 내부 경로/스택트레이스/민감정보를 노출하지 않음
+  - 설명값(top_features)을 계산할 수 없으면 임의로 채우지 않고 빈 리스트 반환
+  - Streamlit/Matplotlib/OpenAI API/웹검색/파일검색 관련 코드 포함하지 않음
+  - 추론 중 외부 네트워크 접속 없음 (joblib 로드 + 로컬 예측만 수행)
+
+응답 스키마는 팀 UI 챗봇 연동 규격을 그대로 따릅니다:
+    {
+        "status": "success" | "error",
+        "label": "phishing" | "normal" | "unknown",
+        "phishing_probability": float | None,
+        "signals": list[str],           # 한국어 설명 문구
+        "top_features": list[dict],     # {"name", "value", "contribution"}
+        "model_version": "message-v1",
+        "error": str | None,
+    }
+"""
 
 import os
 import re
 
 import joblib
 
-MODEL_VERSION = "sms-v1"
+MODEL_VERSION = "message-v1"
 _MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sms_spam_model.pkl")
 
-# train_and_export_model.py의 PR curve 실험에서 Naive Bayes 기준
-# F1 최적으로 확인된 threshold (model_meta.json의 default_threshold와 동일하게 유지)
-DEFAULT_THRESHOLD = 0.9621
+# train_and_export_model.py의 threshold 정책과 동일하게 유지
+# (model_meta.json의 default_threshold와도 동일해야 함)
+# train_experiments.py 12-1번 전 구간 스윕 결과, char+word 조합 기준
+# threshold=0.5(기본값)가 char-only보다 FP/FN 모두 우세하여 채택
+# (Precision=0.9032, Recall=0.70, FP=9, FN=36 @ spam_test_master)
+DEFAULT_THRESHOLD = 0.5
 
 _model = None  # 최초 호출 시 한 번만 로드
 
@@ -22,33 +52,94 @@ def _get_model():
 
 
 # --------------------------------------------------------------------
-# 규칙 기반 보조 시그널 (임시로 클로드가 생성)
-# ML 확률 하나만 보여주면 챗봇이 "왜 스팸이라고 판단했는지" 설명하기
+# 규칙 기반 보조 시그널
+# ML 확률 하나만 보여주면 챗봇이 "왜 피싱이라고 판단했는지" 설명하기
 # 어려워서, 자주 나타나는 패턴을 별도로 탐지해 signals에 같이 담는다.
 # ML 판정과는 독립적이며, 참고용 근거로만 사용.
+# 키는 내부 식별용이고, 실제로 반환되는 건 한국어 설명 문구(값)임.
 # --------------------------------------------------------------------
 _SIGNAL_PATTERNS = {
-    "url_or_link": re.compile(r"(https?://|www\.|bit\.ly|\.kr\b|\.com\b)", re.IGNORECASE),
-    "phone_number": re.compile(r"01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}"),
-    "urgency_keyword": re.compile(r"(즉시|긴급|지금\s*확인|바로\s*확인|한정|마감)"),
-    "money_keyword": re.compile(r"(대출|입금|환급|당첨|무료|상품권|이벤트|캐시백)"),
-    "messenger_contact": re.compile(r"(텔레그램|카톡|라인)\s*(문의|상담|@)"),
-    "impersonation_keyword": re.compile(r"(국외발신|해외\s*로그인|계정\s*정지|본인\s*인증)"),
+    "url_or_link": (
+        re.compile(r"(https?://|www\.|bit\.ly|\.kr\b|\.com\b)", re.IGNORECASE),
+        "의심스러운 링크 포함",
+    ),
+    "phone_number": (
+        re.compile(r"01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}"),
+        "전화번호 포함",
+    ),
+    "urgency_keyword": (
+        re.compile(r"(즉시|긴급|지금\s*확인|바로\s*확인|한정|마감)"),
+        "긴급성을 강조하는 표현",
+    ),
+    "money_keyword": (
+        re.compile(r"(대출|입금|환급|당첨|무료|상품권|이벤트|캐시백)"),
+        "금전/보상 관련 표현",
+    ),
+    "messenger_contact": (
+        re.compile(r"(텔레그램|카톡|라인)\s*(문의|상담|@)"),
+        "메신저 상담으로 유도하는 표현",
+    ),
+    "impersonation_keyword": (
+        re.compile(r"(국외발신|해외\s*로그인|계정\s*정지|본인\s*인증)"),
+        "기관/계정 사칭 표현",
+    ),
+    "personal_info_request": (
+        re.compile(r"(비밀번호|인증번호|계좌번호|주민등록번호|카드번호|보안카드|OTP)", re.IGNORECASE),
+        "개인정보 입력 요구",
+    ),
 }
 
 
 def _detect_signals(text: str) -> list[str]:
-    return [name for name, pattern in _SIGNAL_PATTERNS.items() if pattern.search(text)]
+    return [
+        description
+        for pattern, description in _SIGNAL_PATTERNS.values()
+        if pattern.search(text)
+    ]
+
+
+def _get_preprocessor(tfidf_step):
+    """단일 TfidfVectorizer 또는 FeatureUnion(char+word) 양쪽에서
+    실제 사용된 preprocessor 콜러블을 찾아 반환. FeatureUnion은 자체
+    preprocessor 속성이 없어서 하위 서브 변환기에서 찾아야 함."""
+    if hasattr(tfidf_step, "preprocessor"):
+        return tfidf_step.preprocessor
+    if hasattr(tfidf_step, "transformer_list"):
+        for _, sub in tfidf_step.transformer_list:
+            pre = getattr(sub, "preprocessor", None)
+            if pre is not None:
+                return pre
+    return None
+
+
+def _strip_union_prefix(name: str) -> str:
+    """FeatureUnion(verbose_feature_names_out=True 기본값)은 특징 이름 앞에
+    'char__'/'word__' 처럼 서브 변환기 이름을 붙인다. 표시/원문 매칭 시에는
+    이 접두어를 떼어내야 원문에서 위치를 찾을 수 있다."""
+    for prefix in ("char__", "word__"):
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
 
 
 def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
+    """
+    이 문장에서 피싱 판정에 가장 크게 기여한 n-gram을 근사적으로 추출.
 
+    - value       : 해당 n-gram의 TF-IDF 값 (이 문장 안에서의 가중치)
+    - contribution: TF-IDF 값 * 분류기 계수 (판정에 기여한 정도, 근사치)
+
+    계수를 구할 수 없는 모델이면 빈 리스트를 반환.
+    """
     try:
         tfidf = pipeline.named_steps["tfidf"]
         clf = pipeline.named_steps["clf"]
 
         vec = tfidf.transform([text])
-        feature_names = tfidf.get_feature_names_out()
+        tfidf_values = vec.toarray()[0]
+        raw_feature_names = tfidf.get_feature_names_out()
+        # FeatureUnion(char+word)인 경우 'char__'/'word__' 접두어가 붙으므로 제거
+        feature_names = [_strip_union_prefix(str(n)) for n in raw_feature_names]
 
         coefs = None
         if hasattr(clf, "calibrated_classifiers_"):
@@ -63,7 +154,7 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
         elif hasattr(clf, "coef_"):
             coefs = clf.coef_[0]
         elif hasattr(clf, "feature_log_prob_"):
-            # MultinomialNB: coef_가 없어서 log-odds(스팸 클래스 - 정상 클래스)로 근사
+            # MultinomialNB: coef_가 없어서 log-odds(피싱 클래스 - 정상 클래스)로 근사
             classes = list(clf.classes_)
             spam_idx = classes.index(1) if 1 in classes else 1
             ham_idx = classes.index(0) if 0 in classes else 0
@@ -72,16 +163,67 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
         if coefs is None:
             return []
 
-        contrib = vec.multiply(coefs).toarray()[0]
+        contrib = tfidf_values * coefs
         nonzero_idx = contrib.nonzero()[0]
         if len(nonzero_idx) == 0:
             return []
 
+        # 기여도 높은 순으로 정렬 (dedup 전, 넉넉하게 top_n의 6배 정도 후보 확보)
         ranked = nonzero_idx[contrib[nonzero_idx].argsort()[::-1]]
-        top_idx = [i for i in ranked if contrib[i] > 0][:top_n]
+        candidates = [i for i in ranked if contrib[i] > 0][: top_n * 6]
+
+        # 겹치는 n-gram 조각 제거: char n-gram(2~6)은 원문의 같은 구간에서
+        # "http", "tt", "tp:/"처럼 서로 겹치는 조각이 동시에 후보로 올라와서
+        # top_n 자리를 중복으로 채우는 문제가 있음. 각 후보가 실제로 벡터화에
+        # 쓰인 텍스트(전처리 후 - URL이 'url'로 치환된 상태 등)에서 차지하는
+        # 문자 구간(span)을 찾아서, 이미 선택된 항목과 구간이 겹치면 건너뛰고
+        # 서로 겹치지 않는 구간만 최종 선택한다.
+        # 주의: 전처리(preprocessor)가 설정돼 있으면(예: URL 치환) 원문(text)이
+        # 아니라 전처리 결과 기준으로 위치를 찾아야 실제 벡터와 어긋나지 않음.
+        # FeatureUnion(char+word)인 경우 tfidf 자체엔 preprocessor 속성이
+        # 없으므로 서브 변환기에서 찾는다 (_get_preprocessor).
+        preprocessor = _get_preprocessor(tfidf)
+        if preprocessor is not None:
+            match_text = preprocessor(text)
+        elif getattr(tfidf, "lowercase", True):
+            match_text = text.lower() if hasattr(text, "lower") else text
+        else:
+            match_text = text
+
+        selected: list[int] = []
+        selected_spans: list[tuple[int, int]] = []
+        for i in candidates:
+            name = str(feature_names[i]).strip()
+            if not name:
+                continue
+            # TF-IDF는 기본적으로 소문자로 변환해서 어휘를 만들므로,
+            # 원문에서 위치를 찾을 때도 소문자 기준으로 비교해야 함
+            # (그렇지 않으면 "IP" 같은 대문자 구간의 겹침을 놓침)
+            start = match_text.find(name)
+            if start != -1:
+                span = (start, start + len(name))
+                if any(span[0] < s[1] and span[1] > s[0] for s in selected_spans):
+                    continue
+                selected_spans.append(span)
+            else:
+                # 원문에서 위치를 못 찾으면(공백 정규화 등으로) 문자열 포함 관계로 대체 확인
+                if any(
+                    name in str(feature_names[j]).strip() or str(feature_names[j]).strip() in name
+                    for j in selected
+                ):
+                    continue
+            selected.append(i)
+            if len(selected) >= top_n:
+                break
+
+        top_idx = selected
 
         return [
-            {"feature": feature_names[i], "weight": round(float(contrib[i]), 4)}
+            {
+                "name": str(feature_names[i]),
+                "value": round(float(tfidf_values[i]), 4),
+                "contribution": round(float(contrib[i]), 4),
+            }
             for i in top_idx
         ]
     except Exception:
@@ -89,6 +231,10 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
 
 
 def analyze_sms(text: str) -> dict:
+    """
+    SMS 문자 한 건을 분석해서 피싱 여부를 판정한다.
+    팀 UI 챗봇 연동 규격에 맞춘 응답 스키마를 그대로 따른다.
+    """
     if not text or not text.strip():
         return {
             "status": "error",
@@ -102,8 +248,8 @@ def analyze_sms(text: str) -> dict:
 
     try:
         model = _get_model()
-        proba = float(model.predict_proba([text])[0][1])  # 스팸(1)일 확률
-        label = "spam" if proba > DEFAULT_THRESHOLD else "ham"
+        proba = float(model.predict_proba([text])[0][1])  # 피싱(1)일 확률
+        label = "phishing" if proba > DEFAULT_THRESHOLD else "normal"
 
         return {
             "status": "success",
@@ -112,6 +258,7 @@ def analyze_sms(text: str) -> dict:
             "signals": _detect_signals(text),
             "top_features": _get_top_features(model, text),
             "model_version": MODEL_VERSION,
+            "error": None,
         }
 
     except FileNotFoundError:
@@ -122,7 +269,7 @@ def analyze_sms(text: str) -> dict:
             "signals": [],
             "top_features": [],
             "model_version": MODEL_VERSION,
-            "error": f"model file not found: {_MODEL_PATH}",
+            "error": "model not available",
         }
     except Exception:
         return {
@@ -138,8 +285,8 @@ def analyze_sms(text: str) -> dict:
 
 if __name__ == "__main__":
     samples = [
-        "엄마 나 폰이 고장나서 컴퓨터로 문자 보내고 있어",
-        "[국외발신] 계정이 해외 IP에서 로그인되었습니다. 지금 확인하세요 http://bit.ly/abc123",
+        "엄마 나 폰이 망가져서 컴퓨터로 문자 보내고 있어",
+        "[국외발신] 계정이 해외 IP에서 로그인되었습니다. 비밀번호와 인증번호를 지금 확인하세요 http://bit.ly/abc123",
     ]
     for s in samples:
         print(s)
