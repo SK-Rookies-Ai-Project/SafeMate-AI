@@ -2,7 +2,7 @@
 
 SafeMate AI는 의심스러운 문자 메시지와 `.eml` 이메일을 입력받아 위험 신호를 정리하고, 사용자가 취할 수 있는 대응 방법을 안내하는 Streamlit 기반 교육용 보안 도구입니다.
 
-Streamlit UI의 1차 분석은 저장소에 포함된 로컬 문자·이메일·URL 모델을 직접 호출합니다. 결과는 위험 신호를 안내하기 위한 참고 정보이며 실제 피싱 확정 판정으로 사용하지 않습니다.
+Streamlit UI는 OpenAI Responses API의 `run_local_security_analysis` Function Calling 요청을 받아 저장소의 로컬 문자·이메일·URL 모델을 실행합니다. 모델 입력 원문은 호스트가 보관하며 함수 인자로 다시 생성하지 않습니다. OpenAI를 사용할 수 없으면 동일한 로컬 분석을 직접 실행합니다. 결과는 위험 신호를 안내하기 위한 참고 정보이며 실제 피싱 확정 판정으로 사용하지 않습니다.
 
 > 아래 화면 예시는 합성 입력으로 캡처한 예시이며 현재 모델 결과와 수치가 다를 수 있습니다.
 
@@ -13,6 +13,7 @@ Streamlit UI의 1차 분석은 저장소에 포함된 로컬 문자·이메일·
 - 본문, HTML 링크의 `href`, 이미지 `src`에서 URL 후보 추출
 - 이메일 표시 URL과 실제 연결 URL의 도메인 불일치 탐지
 - 로컬 문자·이메일·URL 모델 분석과 종합 주의 수준 계산
+- Function Calling 결과를 `function_call_output`으로 전달한 뒤 Web/File Search로 보충 조사
 - 위험 이유, 즉시 대응 방법과 분석 한계 표시
 - Matplotlib 기반 메시지 통합 점수와 URL 특징 시각화
 - 1차 분석 완료 후 OpenAI 기반 보안 비서 후속 채팅
@@ -40,9 +41,10 @@ Streamlit UI의 1차 분석은 저장소에 포함된 로컬 문자·이메일·
 1. 사용자가 문자 메시지를 붙여넣거나 `.eml` 파일을 업로드합니다.
 2. 입력 형식과 크기를 검증하고, 이메일은 실행하거나 HTML로 렌더링하지 않은 채 헤더와 본문을 파싱합니다.
 3. 본문과 이메일 속성에서 URL 후보를 추출하고 표시 URL과 실제 연결 URL의 불일치를 확인합니다. 이 과정에서 URL에 접속하지 않습니다.
-4. 로컬 문자·이메일 모델과 URL 모델을 호출하고 유효한 점수 중 최댓값으로 종합 주의 수준을 계산합니다.
-5. UI가 위험 이유, 대응 방법, 세부 결과, Matplotlib 그래프와 분석 한계를 표시합니다.
-6. 분석이 끝나면 사용자가 결과에 대해 후속 질문을 입력할 수 있습니다. 이 대화는 1차 판정에 다시 반영되지 않습니다.
+4. Responses API가 `run_local_security_analysis`를 요청하면 앱이 보관한 검증 입력으로 로컬 문자·이메일·URL 모델을 실행하고 `function_call_output`을 반환합니다.
+5. 이어지는 Responses 호출은 Web Search와, 설정된 경우 File Search를 사용해 로컬 판정과 분리된 추가 설명을 생성합니다. OpenAI 단계가 실패해도 로컬 결과는 유지됩니다.
+6. UI가 로컬 위험 이유·대응 방법·그래프와 추가 조사·출처를 구분해 표시합니다.
+7. 분석이 끝나면 사용자가 결과에 대해 후속 질문을 입력할 수 있습니다. 이 대화는 로컬 판정에 다시 반영되지 않습니다.
 
 ## 설치 및 실행
 
@@ -82,13 +84,13 @@ SAFEMATE_URL_MODEL_KIND=char
 
 | 변수 | 설명 |
 |---|---|
-| `OPENAI_API_KEY` | 분석 후 보안 비서 채팅에서 사용할 OpenAI API 키입니다. 저장소에 커밋하지 마세요. |
-| `OPENAI_MODEL` | 후속 채팅에 사용할 OpenAI 모델 이름입니다. |
-| `OPENAI_VECTOR_STORE_ID` | 선택 항목입니다. 설정하면 등록된 보안 문서 검색을 후속 채팅에 사용할 수 있습니다. |
+| `OPENAI_API_KEY` | Function Calling, 추가 조사와 후속 채팅에 사용할 OpenAI API 키입니다. 저장소에 커밋하지 마세요. |
+| `OPENAI_MODEL` | Function Calling과 검색 설명에 사용할 OpenAI 모델 이름입니다. |
+| `OPENAI_VECTOR_STORE_ID` | 선택 항목입니다. 설정하면 추가 조사와 후속 채팅에 File Search를 사용합니다. |
 | `SAFEMATE_URL_MODEL_PATH` | 선택 항목입니다. 비어 있으면 저장소에 포함된 기본 URL 모델을 사용합니다. |
 | `SAFEMATE_URL_MODEL_KIND` | URL 모델 종류입니다. 기본값은 현재 모델 산출물에 맞는 `char`입니다. |
 
-1차 분석은 별도 백엔드 선택 없이 저장소의 로컬 문자·이메일·URL 모델을 직접 사용합니다. `OPENAI_VECTOR_STORE_ID`가 비어 있으면 후속 채팅의 File Search는 사용하지 않습니다.
+실제 분류와 점수는 항상 저장소의 로컬 모델이 산출합니다. OpenAI를 사용할 수 없으면 앱이 같은 로컬 분석기를 직접 호출합니다. `OPENAI_VECTOR_STORE_ID`가 비어 있으면 Web Search만 사용합니다.
 
 ## 운영 정책
 
@@ -126,7 +128,7 @@ SAFEMATE_URL_MODEL_KIND=char
 | `.eml` 검증 및 파싱 | 구현 | 확장자, 크기, 시그니처, 구조 검증 포함 |
 | URL 추출 | 구현 | 본문, `href`, 이미지 `src` 대상 |
 | 표시 URL과 실제 연결 URL 불일치 탐지 | 구현 | 이메일 HTML 링크의 도메인 비교 |
-| 1차 분석 | 구현 | 로컬 문자·이메일·URL 모델을 직접 호출 |
+| 1차 분석 Agent | 구현 | strict Function Calling 요청을 호스트의 로컬 문자·이메일·URL 모델로 실행 |
 | Matplotlib 시각화 | 구현 | 메시지 통합 점수와 URL 특징 시각화 |
 | 분석 후 보안 비서 채팅 | 구현 | OpenAI 설정과 네트워크 필요 |
 | 로컬 메시지·URL 모델 연결 | 구현 | `LocalAnalysisClient`가 공통 응답 계약으로 통합 |
