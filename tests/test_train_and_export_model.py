@@ -34,7 +34,7 @@ from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.svm import LinearSVC
 
-from sms_text_preprocessing import sms_preprocessor
+from test_sms_text_preprocessing import sms_preprocessor
 
 MODEL_PATH = "sms_spam_model.pkl"
 META_PATH = "model_meta.json"
