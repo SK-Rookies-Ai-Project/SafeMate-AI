@@ -77,11 +77,17 @@ def normalize_web_citation(annotation: Any) -> dict | None:
     if not is_official_source_url(url):
         return None
     normalized_url = url.strip()
-    return {
+    citation = {
         "type": "url",
         "title": _get_value(annotation, "title") or normalized_url,
         "url": normalized_url,
     }
+    start_index = _get_value(annotation, "start_index")
+    end_index = _get_value(annotation, "end_index")
+    if _is_nonnegative_index(start_index) and _is_nonnegative_index(end_index):
+        citation["start_index"] = start_index
+        citation["end_index"] = end_index
+    return citation
 
 
 def _normalize_allowed_domains(domains: tuple[str, ...]) -> list[str]:
@@ -100,6 +106,10 @@ def _normalize_domain(domain: str) -> str:
         return normalized.encode("idna").decode("ascii")
     except UnicodeError:
         return normalized
+
+
+def _is_nonnegative_index(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _get_value(value: Any, key: str, default: Any = None) -> Any:

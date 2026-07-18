@@ -34,11 +34,7 @@ def normalize_file_citation(annotation: Any) -> dict | None:
     if _get_value(annotation, "type") != "file_citation":
         return None
     filename = _get_value(annotation, "filename") or "등록된 보안 문서"
-    citation = {"type": "file", "title": str(filename)}
-    file_id = _get_value(annotation, "file_id")
-    if file_id:
-        citation["file_id"] = str(file_id)
-    return citation
+    return {"type": "file", "title": str(filename)}
 
 
 def _get_value(value: Any, key: str, default: Any = None) -> Any:
