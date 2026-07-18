@@ -6,14 +6,14 @@ import json
 from typing import Any, Optional, Union
 from pathlib import Path
 
+from src.analyzers import url_analyzer
 from src.analyzers.text_analyzer import analyze_message
 from src.config import MAX_URLS_TO_ANALYZE
 from src.pipeline import calculate_overall_risk
-from src.ui.local_url_client import LocalUrlAnalysisClient
 from src.ui.url_candidates import deduplicate_and_prioritize
 
 
-class LocalAnalysisClient(LocalUrlAnalysisClient):
+class LocalAnalysisClient:
     """Build AnalysisResponse-compatible results from local model outputs."""
 
     def __init__(
@@ -22,10 +22,8 @@ class LocalAnalysisClient(LocalUrlAnalysisClient):
         url_model_path: Optional[Union[str, Path]] = None,
         url_model_kind: str = "char",
     ) -> None:
-        super().__init__(
-            url_model_path=url_model_path,
-            url_model_kind=url_model_kind,
-        )
+        self.url_model_path = url_model_path
+        self.url_model_kind = url_model_kind
 
     def analyze(self, payload: dict) -> dict:
         candidates = payload.get("url_candidates", [])
@@ -64,6 +62,29 @@ class LocalAnalysisClient(LocalUrlAnalysisClient):
             "errors": _build_errors(message_analysis, url_analysis),
         }
         return _json_safe(response)
+
+    def _analyze_candidate(self, candidate: dict) -> dict:
+        result = url_analyzer.analyze_url(
+            candidate["url"],
+            model_path=self.url_model_path,
+            model_kind=self.url_model_kind,
+        )
+        merged = {
+            **result,
+            "input_indexes": candidate["input_indexes"],
+            "occurrence_count": candidate["occurrence_count"],
+            "source_types": candidate["source_types"],
+            "displayed_url": candidate.get("displayed_url"),
+            "displayed_domain": candidate.get("displayed_domain"),
+            "destination_domain": candidate.get("destination_domain"),
+            "display_href_mismatch": candidate.get(
+                "display_href_mismatch", False
+            ),
+        }
+        candidate_signals = candidate.get("signals", [])
+        model_signals = result.get("signals", [])
+        merged["signals"] = list(dict.fromkeys(candidate_signals + model_signals))
+        return merged
 
 
 def _build_summary(message_analysis: dict, url_analysis: list[dict]) -> str:
@@ -169,5 +190,9 @@ def _json_safe(value: Any) -> Any:
 def _json_default(value: Any) -> Any:
     item = getattr(value, "item", None)
     if callable(item):
-        return item()
-    return str(value)
+        normalized = item()
+        if normalized is None or isinstance(
+            normalized, (str, int, float, bool)
+        ):
+            return normalized
+    raise TypeError(f"Unsupported model output type: {type(value).__name__}")

@@ -1,7 +1,10 @@
 import json
 from unittest.mock import patch
 
-from src.ui.local_analysis_client import LocalAnalysisClient
+import numpy as np
+import pytest
+
+from src.ui.local_analysis_client import LocalAnalysisClient, _json_safe
 
 
 def test_local_client_integrates_sms_and_url_analysis():
@@ -41,7 +44,7 @@ def test_local_client_integrates_sms_and_url_analysis():
     with patch(
         "src.ui.local_analysis_client.analyze_message", return_value=message_result
     ) as analyze_message, patch(
-        "src.ui.local_url_client.url_analyzer.analyze_url", return_value=url_result
+        "src.ui.local_analysis_client.url_analyzer.analyze_url", return_value=url_result
     ) as analyze_url:
         result = LocalAnalysisClient().analyze(request)
 
@@ -108,7 +111,7 @@ def test_local_client_surfaces_structured_message_failure_with_url_result():
     with patch(
         "src.ui.local_analysis_client.analyze_message", return_value=message_result
     ), patch(
-        "src.ui.local_url_client.url_analyzer.analyze_url", return_value=url_result
+        "src.ui.local_analysis_client.url_analyzer.analyze_url", return_value=url_result
     ):
         result = LocalAnalysisClient().analyze(request)
 
@@ -125,3 +128,15 @@ def test_local_client_surfaces_structured_message_failure_with_url_result():
     assert result["url_analysis_summary"]["failed_count"] == 0
     assert result["overall_risk"] == {"score": 0.08, "level": "low"}
     json.dumps(result)
+
+
+def test_json_safe_converts_numpy_scalars_without_stringifying_them():
+    assert _json_safe({"score": np.float64(0.75), "count": np.int64(2)}) == {
+        "score": 0.75,
+        "count": 2,
+    }
+
+
+def test_json_safe_rejects_arbitrary_unknown_objects():
+    with pytest.raises(TypeError):
+        _json_safe({"value": object()})

@@ -1,9 +1,9 @@
 from unittest.mock import patch
 
-from src.ui.local_url_client import LocalUrlAnalysisClient
+from src.ui.local_analysis_client import LocalAnalysisClient
 
 
-def test_local_url_client_runs_url_model_and_preserves_candidate_metadata():
+def test_local_client_runs_url_model_and_preserves_candidate_metadata():
     request = {
         "schema_version": "1.0",
         "request_id": "analysis-local-url",
@@ -28,6 +28,15 @@ def test_local_url_client_runs_url_model_and_preserves_candidate_metadata():
             },
         ],
     }
+    message_result = {
+        "status": "success",
+        "label": "normal",
+        "phishing_probability": 0.05,
+        "signals": [],
+        "top_features": [],
+        "model_version": "email-v1",
+        "error": None,
+    }
     model_result = {
         "status": "success",
         "url": "https://evil.example/login",
@@ -40,10 +49,13 @@ def test_local_url_client_runs_url_model_and_preserves_candidate_metadata():
     }
 
     with patch(
-        "src.ui.local_url_client.url_analyzer.analyze_url",
+        "src.ui.local_analysis_client.analyze_message",
+        return_value=message_result,
+    ), patch(
+        "src.ui.local_analysis_client.url_analyzer.analyze_url",
         return_value=model_result,
     ) as analyze_url:
-        result = LocalUrlAnalysisClient(
+        result = LocalAnalysisClient(
             url_model_path="models/url_char_model.joblib"
         ).analyze(request)
 
@@ -53,7 +65,6 @@ def test_local_url_client_runs_url_model_and_preserves_candidate_metadata():
         model_kind="char",
     )
     assert result["request_id"] == "analysis-local-url"
-    assert result["message_analysis"]["status"] == "skipped"
     assert result["overall_risk"] == {"score": 0.91, "level": "high"}
     assert result["url_analysis_summary"] == {
         "candidate_count": 1,
