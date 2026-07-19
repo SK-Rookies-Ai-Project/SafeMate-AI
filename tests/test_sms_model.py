@@ -1,43 +1,27 @@
-"""
-analyze_message.py 에서 `from sms_model import analyze_sms` 로 불러쓰는
-SMS 스캠(피싱) 탐지 프로덕션 모듈.
 
-학습/실험 코드는 여기 없습니다 (train_experiments.py, train_and_export_model.py 참고).
-이 파일은 오직 sms_spam_model.pkl을 로드해서 문자 한 건을 판독하는 역할만 합니다.
+# 응답 스키마는 팀 UI 챗봇 연동 규격을 따릅니다:
+#     {
+#         "status": "success" | "error",
+#         "label": "phishing" | "normal" | "unknown",
+#         "phishing_probability": float | None,
+#         "signals": list[str],           # 한국어 설명 문구
+#         "top_features": list[dict],     # {"name", "value", "contribution"}
+#         "model_version": "message-v1",
+#         "error": str | None,
+#     }
 
-이 모듈은 프로젝트 공통 연동 조건을 따릅니다:
-  - UI는 analyze_sms() 단일 함수만 호출 (내부 구현에 관여하지 않음)
-  - 추론 요청마다 재학습하지 않음, 모델은 최초 호출 시 1회만 로드 후 캐시
-  - 반환값은 항상 JSON 직렬화 가능한 dict (status/model_version 항상 포함)
-  - 실패 시에도 내부 경로/스택트레이스/민감정보를 노출하지 않음
-  - 설명값(top_features)을 계산할 수 없으면 임의로 채우지 않고 빈 리스트 반환
-  - Streamlit/Matplotlib/OpenAI API/웹검색/파일검색 관련 코드 포함하지 않음
-  - 추론 중 외부 네트워크 접속 없음 (joblib 로드 + 로컬 예측만 수행)
-
-응답 스키마는 팀 UI 챗봇 연동 규격을 그대로 따릅니다:
-    {
-        "status": "success" | "error",
-        "label": "phishing" | "normal" | "unknown",
-        "phishing_probability": float | None,
-        "signals": list[str],           # 한국어 설명 문구
-        "top_features": list[dict],     # {"name", "value", "contribution"}
-        "model_version": "message-v1",
-        "error": str | None,
-    }
-"""
-
+#전처리와 준비에 필요한 import들
 import os
 import re
-
 import joblib
 
-MODEL_VERSION = "message-v1"
+MODEL_VERSION = "sms_model-v1"
 _MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sms_spam_model.pkl")
 
 # train_and_export_model.py의 threshold 정책과 동일하게 유지
 # (model_meta.json의 default_threshold와도 동일해야 함)
-# train_experiments.py 12-1번 전 구간 스윕 결과, char+word 조합 기준
-# threshold=0.5(기본값)가 char-only보다 FP/FN 모두 우세하여 채택
+# threshold의 프로젝트 정책상 현재값은 0.5로 default와 같지만 변경가능하도록 변수로 지정
+# threshold=0.5 기준 char-only보다 char+word 조합이 FP/FN 지표 모두 우세하여 char+word 합쳐서 전처리
 # (Precision=0.9032, Recall=0.70, FP=9, FN=36 @ spam_test_master)
 DEFAULT_THRESHOLD = 0.5
 
@@ -52,7 +36,7 @@ def _get_model():
 
 
 # --------------------------------------------------------------------
-# 규칙 기반 보조 시그널
+# 시그널 패턴 정의 (필요시 사용될것)
 # ML 확률 하나만 보여주면 챗봇이 "왜 피싱이라고 판단했는지" 설명하기
 # 어려워서, 자주 나타나는 패턴을 별도로 탐지해 signals에 같이 담는다.
 # ML 판정과는 독립적이며, 참고용 근거로만 사용.
@@ -99,9 +83,6 @@ def _detect_signals(text: str) -> list[str]:
 
 
 def _get_preprocessor(tfidf_step):
-    """단일 TfidfVectorizer 또는 FeatureUnion(char+word) 양쪽에서
-    실제 사용된 preprocessor 콜러블을 찾아 반환. FeatureUnion은 자체
-    preprocessor 속성이 없어서 하위 서브 변환기에서 찾아야 함."""
     if hasattr(tfidf_step, "preprocessor"):
         return tfidf_step.preprocessor
     if hasattr(tfidf_step, "transformer_list"):
@@ -111,26 +92,15 @@ def _get_preprocessor(tfidf_step):
                 return pre
     return None
 
-
+#char+word를 쓰기 때문에 필요한 처리. 어느 분류기에 걸린 것인지 표기해주는 문구는 사용자에게 노출할 이유 없음.
 def _strip_union_prefix(name: str) -> str:
-    """FeatureUnion(verbose_feature_names_out=True 기본값)은 특징 이름 앞에
-    'char__'/'word__' 처럼 서브 변환기 이름을 붙인다. 표시/원문 매칭 시에는
-    이 접두어를 떼어내야 원문에서 위치를 찾을 수 있다."""
     for prefix in ("char__", "word__"):
         if name.startswith(prefix):
             return name[len(prefix):]
     return name
 
-
+#top features 채워주는 함수(필요시 쓸수 있게 구현)
 def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
-    """
-    이 문장에서 피싱 판정에 가장 크게 기여한 n-gram을 근사적으로 추출.
-
-    - value       : 해당 n-gram의 TF-IDF 값 (이 문장 안에서의 가중치)
-    - contribution: TF-IDF 값 * 분류기 계수 (판정에 기여한 정도, 근사치)
-
-    계수를 구할 수 없는 모델이면 빈 리스트를 반환.
-    """
     try:
         tfidf = pipeline.named_steps["tfidf"]
         clf = pipeline.named_steps["clf"]
@@ -168,10 +138,10 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
         if len(nonzero_idx) == 0:
             return []
 
-        # 기여도 높은 순으로 정렬 (dedup 전, 넉넉하게 top_n의 6배 정도 후보 확보)
+        # 기여도 높은 순으로 정렬
         ranked = nonzero_idx[contrib[nonzero_idx].argsort()[::-1]]
         candidates = [i for i in ranked if contrib[i] > 0][: top_n * 6]
-
+        #왜 candidate를 많이 확보하는가?
         # 겹치는 n-gram 조각 제거: char n-gram(2~6)은 원문의 같은 구간에서
         # "http", "tt", "tp:/"처럼 서로 겹치는 조각이 동시에 후보로 올라와서
         # top_n 자리를 중복으로 채우는 문제가 있음. 각 후보가 실제로 벡터화에
@@ -229,12 +199,8 @@ def _get_top_features(pipeline, text: str, top_n: int = 5) -> list[dict]:
     except Exception:
         return []
 
-
+#문자열(실제 테스트할 sms 내용)을 받아와 학습된 모델로 실제로 예측, 분류하기.
 def analyze_sms(text: str) -> dict:
-    """
-    SMS 문자 한 건을 분석해서 피싱 여부를 판정한다.
-    팀 UI 챗봇 연동 규격에 맞춘 응답 스키마를 그대로 따른다.
-    """
     if not text or not text.strip():
         return {
             "status": "error",
@@ -282,7 +248,7 @@ def analyze_sms(text: str) -> dict:
             "error": "analysis failed",
         }
 
-
+#본 파일로 단일 테스트 해볼때 샘플은 간단한것 두개.
 if __name__ == "__main__":
     samples = [
         "엄마 나 폰이 망가져서 컴퓨터로 문자 보내고 있어",
