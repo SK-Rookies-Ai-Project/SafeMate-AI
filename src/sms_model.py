@@ -1,11 +1,40 @@
+import math
 import joblib
 
 MODEL_PATH = "models/sms_spam_model.pkl"
 
-model = joblib.load(MODEL_PATH)
+_model = None
 
-# 피싱 판정 임계값
-DEFAULT_THRESHOLD = 0.5
+MODEL_VERSION = "sms-v1"
+
+# 최적 임계값
+BEST_THRESHOLD = 0.9621
+
+
+# 모델을 한 번만 로드하여 재사용
+def _get_model():
+
+    global _model
+
+    if _model is None:
+        _model = joblib.load(MODEL_PATH)
+
+    return _model
+
+
+# 공통 에러 반환
+def _error_result(error: str) -> dict:
+
+    return {
+        "status": "error",
+        "label": "unknown",
+        "phishing_probability": None,
+        "signals": [],
+        "top_features": [],
+        "model_version": MODEL_VERSION,
+        "error": error,
+    }
+
 
 # 위험 신호 규칙
 SIGNAL_RULES = [
@@ -95,7 +124,7 @@ SIGNAL_RULES = [
             "구직",
             "인사담당자",
             "재택근무",
-            "부업"
+            "부업",
         ],
     ),
     (
@@ -144,9 +173,12 @@ SIGNAL_RULES = [
     ),
 ]
 
+# TF-IDF와 Naive Bayes를 이용해 상위 특징 추출
 def extract_top_features(text: str) -> list:
 
     try:
+
+        model = _get_model()
 
         tfidf = model.named_steps["tfidf"]
         clf = model.named_steps["clf"]
@@ -155,36 +187,53 @@ def extract_top_features(text: str) -> list:
 
         feature_names = tfidf.get_feature_names_out()
 
-        spam_idx = 1
+        normal_idx = 0
+        phishing_idx = 1
 
         features = []
 
         for idx in x.nonzero()[1]:
 
-            score = float(
-                clf.feature_log_prob_[spam_idx][idx]
+            name = feature_names[idx].strip()
+
+            # 의미 없는 토큰 제거
+            if len(name) < 2:
+                continue
+
+        
+            # 피싱 클래스 기여도 계산        
+            contribution = float(
+                clf.feature_log_prob_[phishing_idx][idx]
+                - clf.feature_log_prob_[normal_idx][idx]
             )
 
-            name = feature_names[idx]
-
-            if len(name.strip()) < 2:
+            # 피싱에 기여한 단어만 선택
+            if contribution <= 0:
                 continue
 
             features.append(
                 {
                     "name": name,
-                    "score": score,
+                    "value": round(
+                        float(x[0, idx]),
+                        4,
+                    ),
+                    "contribution": round(
+                        contribution,
+                        4,
+                    ),
                 }
             )
 
-        features = sorted(
-            features,
-            key=lambda x: x["score"],
+        # 기여도가 높은 순 정렬
+        features.sort(
+            key=lambda x: x["contribution"],
             reverse=True,
         )
 
         selected = []
 
+        # 중복 제거 후 상위 3개 반환
         for feature in features:
 
             duplicated = False
@@ -192,8 +241,8 @@ def extract_top_features(text: str) -> list:
             for existing in selected:
 
                 if (
-                    feature["name"] in existing
-                    or existing in feature["name"]
+                    feature["name"] in existing["name"]
+                    or existing["name"] in feature["name"]
                 ):
                     duplicated = True
                     break
@@ -201,9 +250,9 @@ def extract_top_features(text: str) -> list:
             if duplicated:
                 continue
 
-            selected.append(feature["name"])
+            selected.append(feature)
 
-            if len(selected) >= 3:
+            if len(selected) == 3:
                 break
 
         return selected
@@ -211,75 +260,69 @@ def extract_top_features(text: str) -> list:
     except Exception:
 
         return []
-
+    
+# SMS 피싱 분석
 def analyze_sms(text: str) -> dict:
 
     try:
-
         # 입력값 검증
         if not text or not text.strip():
-            return {
-                "status": "error",
-                "label": "unknown",
-                "phishing_probability": None,
-                "signals": [],
-                "top_features": [],
-                "model_version": "sms-v1",
-                "error": "empty_text",
-            }
+            return _error_result("empty_text")
+
+        text = text.strip()
+
+        model = _get_model()
 
         # 피싱 확률 예측
         phishing_prob = float(
             model.predict_proba([text])[0][1]
         )
 
-        # 최종 라벨 결정
+        if (
+            not math.isfinite(phishing_prob)
+            or phishing_prob < 0
+            or phishing_prob > 1
+        ):
+            raise ValueError("invalid_probability")
+        # 예측 결과에 따른 라벨 결정
         label = (
             "phishing"
-            if phishing_prob >= DEFAULT_THRESHOLD
+            if phishing_prob > BEST_THRESHOLD
             else "normal"
         )
 
-        # 피싱 문자 위험 신호 추출
         signals = []
 
+        # 피싱으로 판단된 경우 위험 신호 탐지
         if label == "phishing":
 
             lowered_text = text.lower()
 
             for signal_name, keywords in SIGNAL_RULES:
 
-                matched = any(
+                if any(
                     keyword.lower() in lowered_text
                     for keyword in keywords
-                )
-
-                if matched:
+                ):
                     signals.append(signal_name)
 
-        # top feature 제공
+        signals = list(dict.fromkeys(signals))
+        # 사용자에게 보여줄 상위 특징 추출
         top_features = extract_top_features(text)
 
-        # 분석 결과 반환
         return {
             "status": "success",
             "label": label,
-            "phishing_probability": phishing_prob,
+            "phishing_probability": round(
+                phishing_prob,
+                2,
+            ),
             "signals": signals,
             "top_features": top_features,
-            "model_version": "sms-v1",
+            "model_version": MODEL_VERSION,
             "error": None,
         }
 
-    except Exception:
+    except Exception as e:
 
-        # 안전한 오류 정보 반환
-        return {
-            "status": "error",
-            "label": "unknown",
-            "phishing_probability": None,
-            "signals": [],
-            "top_features": [],
-            "model_version": "sms-v1",
-            "error": "sms analysis failed",
-        }
+        return _error_result(str(e))
