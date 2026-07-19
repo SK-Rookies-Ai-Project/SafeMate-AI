@@ -77,6 +77,22 @@ class MessageAnalyzerTest(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "MODEL_NOT_AVAILABLE")
         self.assertNotIn("sms_spam_model.pkl", result["error"]["message"])
 
+    def test_sms_model_uses_optimized_threshold(self) -> None:
+        below_threshold = FakeBinaryModel(0.95)
+        above_threshold = FakeBinaryModel(0.97)
+
+        with patch(
+            "src.analyzers.message_model_common._load_model",
+            side_effect=[below_threshold, above_threshold],
+        ):
+            normal = analyze_sms("확인 링크를 눌러주세요")
+            phishing = analyze_sms("확인 링크를 눌러주세요")
+
+        self.assertEqual(normal["label"], "normal")
+        self.assertEqual(normal["signals"], [])
+        self.assertEqual(phishing["label"], "phishing")
+        self.assertIn("URL 또는 외부 접속 유도 표현", phishing["signals"])
+
     def test_results_are_strict_json_serializable(self) -> None:
         result = analyze_message("", "email")
         serialized = json.dumps(result, ensure_ascii=False, allow_nan=False)
