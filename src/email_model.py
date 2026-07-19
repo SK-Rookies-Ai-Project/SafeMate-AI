@@ -1,10 +1,24 @@
 import joblib
 
 MODEL_PATH = "models/email_spam_model.pkl"
-model = joblib.load(MODEL_PATH)
 
-# 피싱 판정 임계값
+_MODEL = None
+
+MODEL_VERSION = "email-v1"
+
 DEFAULT_THRESHOLD = 0.5
+
+
+# 모델을 한 번만 로드하여 재사용
+def _get_model():
+
+    global _MODEL
+
+    if _MODEL is None:
+        _MODEL = joblib.load(MODEL_PATH)
+
+    return _MODEL
+
 
 # 위험 신호 규칙
 SIGNAL_RULES = [
@@ -92,8 +106,12 @@ SIGNAL_RULES = [
 ]
 
 
-def extract_top_features(full_text: str) -> list:
-
+# TF-IDF와 모델 계수를 이용해 상위 특징 추출
+def extract_top_features(
+    full_text: str,
+    model,
+) -> list:
+    
     try:
 
         tfidf_union = model.named_steps["tfidf"]
@@ -101,20 +119,16 @@ def extract_top_features(full_text: str) -> list:
 
         x = tfidf_union.transform([full_text])
 
-        feature_names = (
-            tfidf_union.get_feature_names_out()
-        )
-
+        feature_names = tfidf_union.get_feature_names_out()
         coef = clf.coef_[0]
 
         raw_features = []
 
+
         # 각 feature 기여도 계산
         for idx in x.nonzero()[1]:
 
-            contribution = float(
-                x[0, idx] * coef[idx]
-            )
+            contribution = float(x[0, idx] * coef[idx])
 
             feature_name = feature_names[idx]
 
@@ -128,30 +142,35 @@ def extract_top_features(full_text: str) -> list:
                 ""
             )
 
-            # 한 글자 제거
+            # 한 글자 feature 제거
             if len(feature_name.strip()) < 2:
                 continue
 
-            # 기여도 너무 작으면 제거
+            # 기여도가 너무 작으면 제거
             if abs(contribution) < 0.05:
                 continue
 
             raw_features.append(
                 {
                     "name": feature_name,
+                    "value": round(
+                        float(x[0, idx]),
+                        4,
+                    ),
+                    # 사용자에게는 절댓값으로 표시
                     "contribution": round(
-                        contribution,
+                        abs(contribution),
                         4,
                     ),
                 }
             )
 
-        # 기여도 순 정렬
+
+
+        # 기여도 큰 순으로 정렬
         raw_features = sorted(
             raw_features,
-            key=lambda x: abs(
-                x["contribution"]
-            ),
+            key=lambda x: x["contribution"],
             reverse=True,
         )
 
@@ -179,7 +198,7 @@ def extract_top_features(full_text: str) -> list:
 
             filtered.append(feature)
 
-            # 상위 3개만
+            # 상위 3개만 반환
             if len(filtered) >= 3:
                 break
 
@@ -189,6 +208,7 @@ def extract_top_features(full_text: str) -> list:
         return []
     
 
+# 이메일 피싱 분석
 def analyze_email(
     text: str,
     subject: str | None = None,
@@ -196,6 +216,8 @@ def analyze_email(
 
     try:
 
+        model = _get_model()
+        # 입력값 검증
         if not text or not text.strip():
 
             return {
@@ -208,12 +230,17 @@ def analyze_email(
                 "error": "empty_text",
             }
 
+        # 제목과 본문 결합
         full_text = f"{subject or ''} {text}"
+        
 
+        # 피싱 확률 예측
         phishing_prob = float(
             model.predict_proba([full_text])[0][1]
         )
 
+
+        # 예측 결과에 따른 라벨 결정
         label = (
             "phishing"
             if phishing_prob >= DEFAULT_THRESHOLD
@@ -221,6 +248,9 @@ def analyze_email(
         )
 
         signals = []
+
+
+        # 피싱으로 판단된 경우 위험 신호 탐지
 
         if label == "phishing":
 
@@ -234,16 +264,19 @@ def analyze_email(
                 ):
                     signals.append(signal_name)
 
+
+        # 사용자에게 보여줄 상위 특징 추출
         top_features = extract_top_features(
-            full_text
-        )
+    full_text,
+    model,
+)
 
         return {
             "status": "success",
             "label": label,
             "phishing_probability": round(
                 phishing_prob,
-                4,
+                2,
             ),
             "signals": signals,
             "top_features": top_features,
