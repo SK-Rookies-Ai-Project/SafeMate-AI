@@ -18,6 +18,17 @@ Streamlit UI는 OpenAI Responses API의 `run_local_security_analysis` Function C
 - Matplotlib 기반 메시지 통합 점수와 URL 특징 시각화
 - 1차 분석 완료 후 OpenAI 기반 보안 비서 후속 채팅
 
+## 기술 요구사항 대응
+
+| 요구사항 | 구현 | 확인 위치 |
+|---|---|---|
+| OpenAI API | Responses API를 이용한 2단계 에이전트 호출 | `src/services/openai_client.py` |
+| 커스텀 ML 툴 | strict `run_local_security_analysis` Function Calling | `src/services/function_dispatch.py` |
+| Web Search | 공식 기관 도메인으로 제한된 Hosted Web Search | `src/services/web_search.py` |
+| File Search | Vector Store가 설정된 경우 Hosted File Search 추가 | `src/services/file_search.py` |
+| Streamlit UI | 입력·미리보기·분석 결과·출처·후속 채팅 | `app.py`, `src/ui/components.py` |
+| 직접 학습 모델 | SMS·이메일·URL 전처리, 학습, 평가 및 모델 산출물 | `scripts/`, `src/analyzers/url/`, `models/` |
+
 ## UI 화면 미리보기
 
 아래 화면은 합성 문자와 `example.com` URL을 사용해 캡처했습니다. 실제 개인정보나 악성 URL은 사용하지 않았습니다.
@@ -45,6 +56,31 @@ Streamlit UI는 OpenAI Responses API의 `run_local_security_analysis` Function C
 5. 이어지는 Responses 호출은 Web Search와, 설정된 경우 File Search를 사용해 로컬 판정과 분리된 추가 설명을 생성합니다. OpenAI 단계가 실패해도 로컬 결과는 유지됩니다.
 6. UI가 로컬 위험 이유·대응 방법·그래프와 추가 조사·출처를 구분해 표시합니다.
 7. 분석이 끝나면 사용자가 결과에 대해 후속 질문을 입력할 수 있습니다. 이 대화는 로컬 판정에 다시 반영되지 않습니다.
+
+### 에이전트와 로컬 모델 연결
+
+```text
+Streamlit app.py
+  └─ build_analysis_request()                  # 검증된 요청 생성
+      └─ SafeMateAgent.analyze()
+          ├─ OpenAI Responses API 1차 호출
+          │   └─ run_local_security_analysis   # strict custom function 강제
+          ├─ dispatch_local_analysis_function()
+          │   └─ LocalAnalysisClient
+          │       ├─ text_analyzer
+          │       │   ├─ sms_model  ── models/sms_spam_model.pkl
+          │       │   └─ email_model ─ models/email_spam_model.pkl
+          │       └─ url_analyzer ──── models/url_char_model.joblib
+          ├─ function_call_output 반환
+          └─ OpenAI Responses API 2차 호출
+              ├─ Web Search
+              └─ File Search                  # Vector Store 설정 시
+```
+
+첫 호출에 전달되는 Function 인자는 `{"analysis_scope":"full"}`로 제한됩니다. 실제 본문과 URL은
+Streamlit에서 검증한 뒤 호스트가 보관하며, GPT가 생성한 인자로 대체할 수 없습니다. 두 번째 호출은
+완료된 로컬 분석 결과를 받아 최신 공식 정보와 등록 문서를 보충 설명할 뿐 로컬 판정과 점수를
+변경하지 않습니다.
 
 ## 설치 및 실행
 
@@ -92,6 +128,24 @@ SAFEMATE_URL_MODEL_KIND=char
 
 실제 분류와 점수는 항상 저장소의 로컬 모델이 산출합니다. OpenAI를 사용할 수 없으면 앱이 같은 로컬 분석기를 직접 호출합니다. `OPENAI_VECTOR_STORE_ID`가 비어 있으면 Web Search만 사용합니다.
 
+### File Search 설정
+
+File Search는 선택 기능입니다. 검수한 공식 문서를 `data/knowledge_base/`에 넣고 다음 스크립트를
+실행하면 Vector Store를 생성하고 문서를 업로드할 수 있습니다.
+
+```bash
+python scripts/create_vector_store.py
+```
+
+출력된 값을 `.env`에 설정합니다.
+
+```env
+OPENAI_VECTOR_STORE_ID=vs_...
+```
+
+Web/File Search의 `tool_choice`는 `auto`입니다. UI의 `사용한 도구` 표시는 OpenAI 응답에 실제
+`web_search_call` 또는 `file_search_call`이 포함됐을 때만 나타납니다.
+
 ## 운영 정책
 
 - OpenAI API는 호출 시도당 60초 타임아웃을 적용하고, 일시적 오류에 한해 최대 2회 재시도합니다.
@@ -119,6 +173,18 @@ SAFEMATE_URL_MODEL_KIND=char
 
 업로드 파일은 최대 25MB이며 `.eml`만 허용됩니다. 이중 확장자, 알려진 바이너리 시그니처, 이메일 헤더와 본문 구조를 검사합니다. HTML은 브라우저에 렌더링하지 않으며 추출된 URL도 파싱 단계에서는 열지 않습니다.
 
+## 로컬 모델과 학습 파이프라인
+
+| 분석 대상 | 데이터 및 전처리 | 모델 | 학습 진입점 |
+|---|---|---|---|
+| SMS | `sms_dataset_augmented.csv`, URL 치환, 템플릿 기반 Group Split | char/word TF-IDF + MultinomialNB | `scripts/train_and_export_sms_model.py` |
+| 이메일 | `20260717_email_dataset_9600.csv`, 정규화 및 사전 정의 train/valid split | word/char TF-IDF + Logistic Regression | `scripts/train_email_spam_model.py` |
+| URL | canonical URL, 중복 제거, eTLD+1 Group Split, 문자 시퀀스/TF-IDF/lexical feature | 기본 CharLSTM 및 실험 모델 | `scripts/train_url_model.py`, `scripts/train_url_model_tfidf.py` |
+
+학습된 SMS·이메일·기본 URL 모델은 `models/`에 포함됩니다. SMS 모델 메타데이터에는 학습
+데이터 경로, 행 수, threshold와 split 전략을 기록합니다. 대용량 URL 원본 데이터셋의 배치와
+재현 방법은 [`data/raw/README.md`](data/raw/README.md)를 참고하세요.
+
 ## 현재 구현 상태
 
 | 항목 | 상태 | 비고 |
@@ -128,10 +194,13 @@ SAFEMATE_URL_MODEL_KIND=char
 | `.eml` 검증 및 파싱 | 구현 | 확장자, 크기, 시그니처, 구조 검증 포함 |
 | URL 추출 | 구현 | 본문, `href`, 이미지 `src` 대상 |
 | 표시 URL과 실제 연결 URL 불일치 탐지 | 구현 | 이메일 HTML 링크의 도메인 비교 |
-| 1차 분석 Agent | 구현 | strict Function Calling 요청을 호스트의 로컬 문자·이메일·URL 모델로 실행 |
+| 1차 분석 Agent | 구현 | strict Function Calling → 로컬 ML → `function_call_output` |
+| Web Search | 구현 | 공식 기관 HTTPS 도메인으로 제한, 기본 활성화 |
+| File Search | 선택 구현 | `OPENAI_VECTOR_STORE_ID` 설정 시 활성화 |
 | Matplotlib 시각화 | 구현 | 메시지 통합 점수와 URL 특징 시각화 |
 | 분석 후 보안 비서 채팅 | 구현 | OpenAI 설정과 네트워크 필요 |
 | 로컬 메시지·URL 모델 연결 | 구현 | `LocalAnalysisClient`가 공통 응답 계약으로 통합 |
+| 모델 학습 파이프라인 | 구현 | SMS·이메일·URL 데이터 전처리, 학습, 평가 및 저장 |
 
 모델 파일은 `models/`에 배치하며 URL 모델 경로와 종류는 선택적 환경변수로 재정의할 수 있습니다.
 
@@ -141,22 +210,30 @@ SAFEMATE_URL_MODEL_KIND=char
 
 ```bash
 python -m pytest -q
+python -m compileall -q app.py src scripts tests
 ```
+
+테스트는 Function schema, 호스트 보관 요청, `function_call_output` 연결, Web/File Search 도구
+구성, OpenAI 실패 시 로컬 fallback, 모델 artifact 로딩과 Streamlit 상태·렌더링을 검증합니다.
 
 ## 프로젝트 구조
 
 ```text
 SafeMate-AI/
 ├── app.py                    # Streamlit 애플리케이션 진입점
+├── data/
+│   ├── raw/                  # 학습 데이터 및 대용량 URL 데이터 안내
+│   └── knowledge_base/       # File Search에 등록할 검수 문서
 ├── src/
 │   ├── analyzers/            # 입력·이메일 파싱과 모델 분석 진입점
-│   ├── services/             # OpenAI Web/File Search 및 후속 채팅
+│   ├── services/             # Function Calling, OpenAI Web/File Search, 후속 채팅
 │   ├── ui/                   # UI 컴포넌트, 로컬 분석 어댑터, 시각화
 │   ├── client_factory.py     # 로컬 분석 클라이언트 구성
 │   ├── contracts.py          # 공통 요청과 클라이언트 계약
 │   ├── config.py             # 입력 제한과 운영 설정
 │   └── pipeline.py           # 종합 위험도 계산 정책
-├── models/                   # 전달된 모델 파일 배치 영역
+├── models/                   # 학습된 SMS·이메일·URL 모델과 평가 메타데이터
+├── scripts/                  # 모델 학습·평가 및 Vector Store 생성 도구
 ├── docs/
 │   └── images/               # README UI 캡처
 ├── tests/                    # 단위·UI·운영 정책 테스트
