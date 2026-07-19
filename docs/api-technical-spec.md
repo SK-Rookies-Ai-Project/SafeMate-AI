@@ -134,48 +134,42 @@ API(`ApiAnalysisClient`)가 공유하는 단일 계약이다(공통계약 3절).
 
 ```text
 Streamlit UI
-→ AnalysisClient.analyze(AnalysisRequest)
-→ 메시지 분류 모델 호출
-→ URL 분석 모델 반복 호출
-→ Web Search / File Search 근거 취합
-→ AnalysisResponse 반환
+→ Responses API: run_local_security_analysis 강제 Function Calling
+→ 호스트: 검증된 AnalysisRequest로 로컬 메시지·URL 모델 실행
+→ function_call_output 전달
+→ Responses API: Web Search / 선택적 File Search
+→ 로컬 AnalysisResponse + 별도 추가 조사 결과 반환
 ```
 
-로컬 모델 호출은 OpenAI에 판단을 맡기지 않는다. 즉 "이메일이 피싱인지"는 파이프라인 코드가
-`analyze_message()`, `analyze_url()`을 **직접, 순서대로** 호출해서 얻는다. OpenAI(Responses API)는
-아래 두 가지에만 쓰인다.
+로컬 모델 호출 여부는 Function Calling 흐름으로 표현하지만 실제 입력과 실행 권한은 호스트가
+보유한다. 모델이 생성하는 함수 인자는 `analysis_scope="full"` 하나뿐이며 본문·제목·URL 후보·요청
+ID를 포함하거나 교체할 수 없다. 피싱 분류와 점수는 호스트가 `analyze_message()`와
+`analyze_url()`을 호출해 얻은 결과만 사용한다.
 
 1. 내장 `web_search`·`file_search` 도구로 관련 공식 자료·최신 사례를 찾는다.
 2. 로컬 모델 결과와 검색 근거를 근거로 사람이 읽을 `summary`, `risk_reasons`, `recommended_actions`
    문장을 생성한다.
 
 ```text
-1) AnalysisRequest 검증 통과 (3절)
+1) AnalysisRequest 검증 후 호스트 메모리에 보관 (3절)
         ↓
-2) analyze_message(body, input_type, subject) 직접 호출 → message_analysis 채움
+2) Responses API가 strict run_local_security_analysis 함수 호출 반환
         ↓
-3) url_candidates 재검증·중복 제거 → 각 candidate["url"]마다 analyze_url(url) 직접 호출
-   → url_analysis, url_analysis_summary 채움
+3) 호스트가 함수명·call_id·{"analysis_scope":"full"}을 검증
         ↓
-4) Responses API 호출 (web_search, file_search 도구 사용)
-   client.responses.create(
-       model=...,
-       tools=[{"type": "web_search"}, {"type": "file_search", "vector_store_ids": [...]}],
-       input=[... message_analysis·url_analysis 요약, 원본 이메일 맥락 ...],
-   )
+4) 보관한 요청으로 analyze_message()와 analyze_url()을 실행해 로컬 AnalysisResponse 생성
         ↓
-5) 응답에서 검색 결과를 추출해 web_evidence·file_evidence로 정규화 (6절)
+5) 동일 call_id의 function_call_output으로 로컬 결과 전달
         ↓
-6) 같은 응답(또는 후속 호출)에서 summary·risk_reasons·recommended_actions 텍스트를 받는다
+6) 후속 Responses 호출에 web_search와 선택적 file_search만 제공
         ↓
-7) overall_risk 산출
-- 메시지 모델의 phishing_probability와 URL 모델의 risk_score를 분석 통합 파이프라인에서 처리한다.
-- GPT나 UI는 score를 계산하지 않는다.
-- 초기 버전(MVP)은 유효한 점수 중 최댓값(max)을 overall_risk.score로 사용한다.
-- Web Search·File Search 결과는 점수 계산이 아니라 위험 근거(evidence) 생성에만 활용한다.
-        ↓
-8) 상태(status) 판정 후 AnalysisResponse 조립·반환 (7절)
+7) 로컬 AnalysisResponse와 추가 조사 텍스트·도구·인용을 별도 필드로 UI에 반환
 ```
+
+메시지 모델의 `phishing_probability`와 URL 모델의 `risk_score`는 로컬 통합 코드가 처리한다.
+GPT나 UI는 점수를 계산하거나 로컬 `status`를 변경하지 않는다. Web/File Search 실패 시 이미
+완료된 로컬 결과를 그대로 유지하고 추가 조사만 비운다. 첫 Responses 호출 자체가 실패하면 같은
+로컬 분석기를 직접 한 번 실행한다.
 ### Search 호출 정책
 
 - Responses API는 필요 시 Web Search와 File Search를 호출한다.

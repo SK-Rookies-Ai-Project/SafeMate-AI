@@ -66,6 +66,8 @@ class WebSearchServiceTest(unittest.TestCase):
                 type="url_citation",
                 title="공식 보안 안내",
                 url="https://www.kisa.or.kr/guide",
+                start_index=4,
+                end_index=10,
             )
         )
 
@@ -75,6 +77,8 @@ class WebSearchServiceTest(unittest.TestCase):
                 "type": "url",
                 "title": "공식 보안 안내",
                 "url": "https://www.kisa.or.kr/guide",
+                "start_index": 4,
+                "end_index": 10,
             },
         )
         self.assertIsNone(
@@ -123,7 +127,6 @@ class FileSearchServiceTest(unittest.TestCase):
             {
                 "type": "file",
                 "title": "smishing_guide.pdf",
-                "file_id": "file_test",
             },
         )
         self.assertIsNone(normalize_file_citation({"type": "url_citation"}))

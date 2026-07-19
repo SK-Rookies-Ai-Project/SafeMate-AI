@@ -16,18 +16,18 @@ SafeMate AI의 Streamlit UI 구현 구조, 공통 분석 파이프라인, 로컬
 
 ## 2. MVP 아키텍처 결정
 
-MVP는 Streamlit과 분석 코드를 같은 저장소와 실행 환경에서 구동한다. 별도 FastAPI 서버를 만들지 않고 `app.py`가 `src/pipeline.py`의 로컬 Python 인터페이스를 호출한다. `LocalAnalysisClient`는 메시지·URL 모델을 명시적 Python 함수로 직접 호출하고, OpenAI Responses API는 검색 근거 취합과 사용자용 설명 생성에만 사용한다.
+MVP는 Streamlit과 분석 코드를 같은 저장소와 실행 환경에서 구동한다. 별도 FastAPI 서버를 만들지 않는다. `SafeMateAgent`는 Responses API에서 strict 로컬 분석 함수 호출을 받은 뒤 호스트에 보관된 검증 요청으로 `LocalAnalysisClient`를 실행한다. 이어지는 Responses 호출은 Web/File Search와 사용자용 추가 설명에만 사용한다.
 
 ```text
 Streamlit app.py
 → 입력 유형 선택(sms | email)
 → SMS 텍스트 정규화 또는 .eml 검증·파싱
 → URL 후보가 포함된 공통 AnalysisRequest 생성
-→ src.pipeline.LocalAnalysisClient
-→ pipeline이 analyze_message(body, input_type, subject) 직접 호출
-→ URL 후보별 analyze_url(candidate["url"]) 직접 호출
-→ 모델 결과를 바탕으로 Web Search·File Search 및 최종 설명 종합
-→ 표준 AnalysisResponse 반환
+→ Responses API가 run_local_security_analysis function_call 반환
+→ 호스트가 LocalAnalysisClient로 메시지·URL 모델 실행
+→ 동일 call_id의 function_call_output 전달
+→ Web Search·선택적 File Search와 추가 설명 생성
+→ 표준 AnalysisResponse와 추가 조사 결과를 분리해 반환
 → Streamlit 결과 렌더링
 ```
 
@@ -188,7 +188,6 @@ DEFAULT_STATE = {
     "uploaded_file_name": None,
     "uploaded_file_digest": None,
     "current_input_digest": None,
-    "last_analyzed_digest": None,
     "parsed_email": None,
     "url_candidates": [],
     "analysis_status": "idle",
@@ -221,7 +220,7 @@ email_digest = create_input_digest("email", file_bytes)
 sms_digest = create_input_digest("sms", sms_text.strip().encode("utf-8"))
 ```
 
-입력 유형이나 해시가 변경되면 이전 미리보기와 분석 결과를 제거한다. `last_analyzed_digest`가 현재 입력 해시와 같고 사용자가 재분석을 명시적으로 요청하지 않았다면 자동 재호출하지 않는다.
+입력 유형이나 해시가 변경되면 이전 분석 결과, 추가 조사와 채팅 상태를 제거한다. 분석은 사용자가 **분석 시작**을 누를 때만 실행한다.
 
 ### 초기화
 
@@ -516,7 +515,7 @@ HTML 링크의 표시 텍스트에 URL이 포함된 경우 다음 메타데이�
 
 ## 11. 로컬 분석 인터페이스
 
-`src/pipeline.py`에 UI가 의존할 인터페이스를 정의한다.
+`src/contracts.py`의 `AnalysisClient` 프로토콜을 통해 UI와 분석 구현을 분리한다.
 
 ```python
 class AnalysisClient:
@@ -526,16 +525,13 @@ class AnalysisClient:
 
 class LocalAnalysisClient(AnalysisClient):
     def analyze(self, payload: "AnalysisRequest") -> "AnalysisResponse":
-        # input_type에 따라 공통 분석기와 OpenAI 서비스를 호출한다.
+        # 입력 유형에 맞는 로컬 메시지 모델과 URL 모델을 호출한다.
         ...
 
 
-class MockAnalysisClient(AnalysisClient):
-    def analyze(self, payload: "AnalysisRequest") -> "AnalysisResponse":
-        return MOCK_ANALYSIS_RESULT
 ```
 
-`app.py`는 실제 분석 과정이나 Mock 분기를 직접 구현하지 않고 `AnalysisClient`만 호출한다.
+`app.py`는 별도 backend 분기 없이 `LocalAnalysisClient`를 구성한 뒤 `AnalysisClient` 계약으로 호출한다.
 
 ## 12. 모델 호출 및 데이터 형식 계약
 
@@ -614,7 +610,7 @@ def analyze_url(url: str) -> dict:
 4. URL 후보의 위치·출처·표시 주소 메타데이터와 HTML 정적 검사 신호는 pipeline이 모델 결과에 병합한다.
 5. 모델 결과는 JSON 직렬화 가능해야 하며 임의의 특징값이나 기여도를 추가하지 않는다.
 6. 하나의 URL 모델 실패가 다른 URL 또는 메시지 분석을 중단시키지 않는다.
-7. OpenAI는 로컬 모델 호출을 결정하거나 모델 입력을 생성하지 않는다.
+7. OpenAI에는 강제된 `analysis_scope="full"` 함수 인자만 허용하며, 로컬 모델 입력은 호스트가 보관한 검증 요청에서 가져온다.
 
 ### OpenAI 전달 형식
 
