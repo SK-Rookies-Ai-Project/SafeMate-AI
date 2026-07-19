@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
-import pickle
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import joblib
 
 
 SIGNAL_RULES = (
@@ -61,8 +62,7 @@ SIGNAL_RULES = (
 
 @lru_cache(maxsize=4)
 def _load_model(model_path: str) -> Any:
-    with Path(model_path).open("rb") as model_file:
-        return pickle.load(model_file)
+    return joblib.load(model_path)
 
 
 def analyze_with_model(

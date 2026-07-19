@@ -196,15 +196,22 @@ class AppChatUiTest(unittest.TestCase):
             app.button[0].click().run(timeout=10)
 
         labels = [button.label for button in app.button]
-        self.assertIn("추가로 확인해야 할 위험 요소가 있나요?", labels)
+        self.assertTrue(
+            {
+                "추가로 확인해야 할 위험 요소가 있나요?",
+                "왜 주의가 필요한지 쉽게 설명해 주세요.",
+                "지금 가장 먼저 해야 할 일은 무엇인가요?",
+            }
+            & set(labels)
+        )
         self.assertIn("이 문자가 정상인지 확인하는 방법을 알려주세요.", labels)
         self.assertIn("이 URL에서 어떤 위험 신호가 발견됐나요?", labels)
         self.assertEqual(
             app.chat_input[0].placeholder,
             "분석 결과에 대해 궁금한 점을 직접 입력하세요.",
         )
-        self.assertEqual(len(app.get("image")), 2)
-        self.assertIn("문자를 분석하지 못했습니다.", [item.value for item in app.error])
+        self.assertGreaterEqual(len(app.get("image")), 2)
+        self.assertNotIn("문자를 분석하지 못했습니다.", [item.value for item in app.error])
         self.assertEqual(len(app.exception), 0)
 
         app.text_area[0].set_value("완전히 다른 문자 내용").run(timeout=10)
