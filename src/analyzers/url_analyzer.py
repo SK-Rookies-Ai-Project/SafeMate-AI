@@ -32,6 +32,7 @@ DEFAULT_MODEL_PATHS = {
     "feature": DEFAULT_MODEL_PATH,
     "tfidf": DEFAULT_TFIDF_MODEL_PATH,
     "char": MODELS_DIR / "url_char_model.joblib",
+    "ensemble": MODELS_DIR / "url_tfidf_logistic.joblib",
 }
 
 
@@ -111,7 +112,7 @@ def analyze_url(
     url: str,
     bundle: Optional[ModelBundle] = None,
     model_path: Optional[Union[str, Path]] = None,
-    model_kind: str = "feature",
+    model_kind: str = "ensemble",
 ) -> dict:
     """Analyze one URL and return the SafeMate URL model contract."""
     validation_error = prediction.validate_url(url)
@@ -158,7 +159,7 @@ def analyze_urls(
     urls: Sequence[str],
     bundle: Optional[ModelBundle] = None,
     model_path: Optional[Union[str, Path]] = None,
-    model_kind: str = "feature",
+    model_kind: str = "ensemble",
 ) -> dict:
     """URL 배열 → {링크: '위험'/'안전'} 딕셔너리 (프로그램 최종 출력 형식)."""
     if bundle is None:
@@ -170,7 +171,7 @@ def analyze_urls_detail(
     urls: Sequence[str],
     bundle: Optional[ModelBundle] = None,
     model_path: Optional[Union[str, Path]] = None,
-    model_kind: str = "feature",
+    model_kind: str = "ensemble",
 ) -> list:
     """상세 결과(라벨, 위험 점수, 판단 근거 포함) — 디버그/UI용."""
     if bundle is None:
