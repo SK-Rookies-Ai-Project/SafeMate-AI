@@ -215,7 +215,7 @@ def label_to_verdict(label) -> str:
 
 
 def predict_urls(bundle: ModelBundle, urls: Sequence[str]) -> list:
-    """Return 50:50 TF-IDF logistic and CharLSTM ensemble predictions."""
+    """Return 50:50 feature-logistic and CharLSTM ensemble predictions."""
     from src.analyzers.url.constants import MODELS_DIR
 
     urls = list(urls)
@@ -225,8 +225,8 @@ def predict_urls(bundle: ModelBundle, urls: Sequence[str]) -> list:
     # Keep the public API intact while loading the two production ensemble models once.
     if not hasattr(predict_urls, "_ensemble_bundles"):
         predict_urls._ensemble_bundles = (
-            ModelBundle.load(MODELS_DIR / "url_tfidf_logistic.joblib"),
-            ModelBundle.load(MODELS_DIR / "url_char_charlstm.joblib"),
+            ModelBundle.load(MODELS_DIR / "url_feature_logistic.joblib"),
+            ModelBundle.load(MODELS_DIR / "url_char_model.joblib"),
         )
     tfidf_bundle, char_bundle = predict_urls._ensemble_bundles
     tfidf_proba = tfidf_bundle.predict_proba(urls)

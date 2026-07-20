@@ -32,7 +32,7 @@ DEFAULT_MODEL_PATHS = {
     "feature": DEFAULT_MODEL_PATH,
     "tfidf": DEFAULT_TFIDF_MODEL_PATH,
     "char": MODELS_DIR / "url_char_model.joblib",
-    "ensemble": MODELS_DIR / "url_tfidf_logistic.joblib",
+    "ensemble": MODELS_DIR / "url_feature_logistic.joblib",
 }
 
 
