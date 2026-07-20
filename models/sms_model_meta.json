@@ -1,0 +1,12 @@
+{
+  "label_meaning": {
+    "0": "정상(ham)",
+    "1": "스팸(spam)"
+  },
+  "model": "TF-IDF(char_wb 2-6gram + word 1-2gram) + MultinomialNB",
+  "trained_at": "2026-07-19T19:02:20",
+  "train_data": "data/raw/sms_dataset_augmented.csv",
+  "train_rows": 4262,
+  "default_threshold": 0.5,
+  "split_strategy": "normalized-template GroupShuffleSplit"
+}
