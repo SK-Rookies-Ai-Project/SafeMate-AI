@@ -215,20 +215,38 @@ def label_to_verdict(label) -> str:
 
 
 def predict_urls(bundle: ModelBundle, urls: Sequence[str]) -> list:
-    """Return legacy detailed prediction rows for multiple URLs."""
+    """Return 50:50 TF-IDF logistic and CharLSTM ensemble predictions."""
+    from src.analyzers.url.constants import MODELS_DIR
+
     urls = list(urls)
-    labels = bundle.predict_labels(urls)
-    proba = bundle.predict_proba(urls)
+    if not urls:
+        return []
+
+    # Keep the public API intact while loading the two production ensemble models once.
+    if not hasattr(predict_urls, "_ensemble_bundles"):
+        predict_urls._ensemble_bundles = (
+            ModelBundle.load(MODELS_DIR / "url_tfidf_logistic.joblib"),
+            ModelBundle.load(MODELS_DIR / "url_char_charlstm.joblib"),
+        )
+    tfidf_bundle, char_bundle = predict_urls._ensemble_bundles
+    tfidf_proba = tfidf_bundle.predict_proba(urls)
+    char_proba = char_bundle.predict_proba(urls)
+    if tfidf_proba is None or char_proba is None:
+        raise ValueError("URL ensemble models must support probability prediction")
+
+    classes = sorted(set(tfidf_proba.columns) | set(char_proba.columns))
+    proba = (
+        tfidf_proba.reindex(columns=classes, fill_value=0.0)
+        + char_proba.reindex(columns=classes, fill_value=0.0)
+    ) / 2.0
 
     results = []
-    for i, (url, label) in enumerate(zip(urls, labels)):
-        risk_score = None
-        proba_row = None
-        if proba is not None:
-            proba_row = {str(c): float(p) for c, p in proba.iloc[i].items()}
-            risk_score = sum(
-                p for c, p in proba_row.items() if c not in BENIGN_LABELS
-            )
+    for url, (_, probabilities) in zip(urls, proba.iterrows()):
+        proba_row = {str(c): float(p) for c, p in probabilities.items()}
+        label = probabilities.idxmax()
+        risk_score = sum(
+            p for c, p in proba_row.items() if c not in BENIGN_LABELS
+        )
         results.append({
             "url": url,
             "label": str(label),
